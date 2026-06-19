@@ -3,7 +3,6 @@
 
 # opencode config dependencies
 .opencode/node_modules/
-.opencode/package-lock.json
 
 # OS files
 .DS_Store
