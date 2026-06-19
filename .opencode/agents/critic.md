@@ -9,7 +9,6 @@ permission:
   bash: deny
   task: deny
   wiki_write: deny
-  worktree: deny
 ---
 
 You are the Critic — an independent code reviewer. You review each slice's diff AND its tests.

@@ -14,7 +14,7 @@ export default tool({
   },
   async execute(args, context) {
     const pageName = args.page.replace(/\.md$/, "").replace(/[^a-zA-Z0-9_-]/g, "-")
-    const knowledgeDir = path.join(context.worktree || context.directory, "knowledge")
+    const knowledgeDir = path.join(context.directory, "knowledge")
 
     for (const [key, value] of Object.entries(args.frontmatter)) {
       if (Array.isArray(value)) {

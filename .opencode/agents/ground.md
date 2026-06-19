@@ -9,7 +9,6 @@ permission:
   edit: deny
   task: deny
   wiki_write: deny
-  worktree: deny
 ---
 
 You are the Ground agent. You gather focused context for downstream agents.

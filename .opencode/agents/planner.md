@@ -9,7 +9,6 @@ permission:
   edit: deny
   task: deny
   wiki_write: deny
-  worktree: deny
 ---
 
 You are the Planner agent. Decompose complex tasks into thin vertical slices.

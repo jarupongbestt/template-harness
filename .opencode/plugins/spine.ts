@@ -5,10 +5,11 @@ import path from "node:path"
 interface SessionState {
   hasTicket: boolean
   tier: number
+  confirmed: boolean
   groundRan: boolean
   plannerRan: boolean
   userLanguage: string
-  currentRunId: string | null
+  dirtyTreeGuardFired: boolean
 }
 
 interface TestImpactEntry {
@@ -24,18 +25,19 @@ function getState(sessionID: string): SessionState {
     state.set(sessionID, {
       hasTicket: false,
       tier: -1,
+      confirmed: false,
       groundRan: false,
       plannerRan: false,
       userLanguage: "en",
-      currentRunId: null,
+      dirtyTreeGuardFired: false,
     })
   }
   return state.get(sessionID)!
 }
 
 const SOURCE_TOOLS = new Set(["edit", "write", "bash"])
-const EXEMPT_PREFIXES = ["knowledge/", ".harness/"]
-const EXEMPT_TOOLS = new Set(["wiki_write", "worktree"])
+const EXEMPT_PREFIXES = ["knowledge/"]
+const EXEMPT_TOOLS = new Set(["wiki_write"])
 
 function isSourceTool(tool: string): boolean {
   return SOURCE_TOOLS.has(tool)
@@ -46,6 +48,15 @@ function isExempt(args: Record<string, unknown>): boolean {
     return true
   }
   return false
+}
+
+function isGitWriteCommand(command: string): boolean {
+  // §10: only git diff/status/show are allowed (read-only logging/scope-audit)
+  const readOnlyPattern = /^git\s+(diff|status|show)(\s|$)/
+  const trimmed = command.trim()
+  if (readOnlyPattern.test(trimmed)) return false
+  // Anything else starting with `git ` is a write command
+  return /^git\s/.test(trimmed)
 }
 
 async function loadTestImpactMap(directory: string): Promise<TestImpactEntry[]> {
@@ -83,10 +94,6 @@ function findScopedTests(changedFiles: string[], impactMap: TestImpactEntry[]): 
   return matched
 }
 
-function getWorktreePath(repoRoot: string, runId: string): string {
-  return path.join(repoRoot, ".harness", "wt", runId)
-}
-
 export const Spine: Plugin = async (ctx) => {
   return {
     "chat.message": async (input, _output) => {
@@ -105,8 +112,42 @@ export const Spine: Plugin = async (ctx) => {
     "tool.execute.before": async (input, output) => {
       const s = getState(input.sessionID)
 
+      // --- Git-write guard (§12) ---
+      // Block mutating git commands from any bash call. Hooks only fire on Conductor,
+      // but this is the last line of defense; subagent toolsets also deny write git.
+      if (input.tool === "bash" && input.args?.command && isGitWriteCommand(String(input.args.command))) {
+        output.error = `Git-write guard: "${String(input.args.command).split(/\s+/).slice(0, 3).join(" ")}" is a mutating git command. The harness never writes git (§10). Allowed: git diff, git status, git show (read-only).`
+        return
+      }
+
+      // --- Dirty-tree guard (§10) ---
+      // On the first source-touching action of a task, check if working tree is dirty.
+      // If so, block and signal the Conductor to ask the user to commit/stash first.
+      if (isSourceTool(input.tool) && !isExempt(input.args ?? {})) {
+        if (!s.dirtyTreeGuardFired && s.hasTicket) {
+          s.dirtyTreeGuardFired = true
+          try {
+            const { exitCode, stdout } = await ctx.$`git status --porcelain`.quiet()
+            if (exitCode === 0 && stdout.toString().trim().length > 0) {
+              output.error = "DIRTY_TREE: You have uncommitted changes in your working tree. Ask the user via the `question` tool: 'You have uncommitted changes. Commit or stash them first so /undo only affects this run?'. Blocking until resolved."
+              return
+            }
+          } catch {
+            // git check failed — proceed anyway
+          }
+        }
+      }
+
+      // --- Route-floor gate (§12) ---
+      // Block Builder/Ground/Planner spawning if required upstream stages haven't run.
       if (input.tool === "task" && input.args?.name) {
         const subagentName = String(input.args.name)
+
+        // Confirm gate must pass before any downstream stage
+        if ((subagentName === "ground" || subagentName === "planner" || subagentName.startsWith("builder-")) && !s.confirmed) {
+          output.error = "Confirmed-first gate: Task not yet confirmed. The Conductor must call `question` to confirm the target with the user before spawning downstream stages. Return control to the Conductor."
+          return
+        }
 
         if (subagentName.startsWith("builder-")) {
           if (s.tier === 1 && !s.groundRan) {
@@ -133,59 +174,58 @@ export const Spine: Plugin = async (ctx) => {
         }
       }
 
+      // --- Confirmed-first gate (§12, silent check on source edits) ---
+      // Blocks raw source edits from the Conductor before the user has confirmed the target.
+      // Per §2, hooks on subagents don't fire, so this gate only protects Conductor-level edits.
+      // Subagent enforcement is via constructed toolset.
       if (isSourceTool(input.tool) && !isExempt(input.args ?? {})) {
-        if (!s.hasTicket) {
-          output.error = "Intake-first gate: No Ticket exists. Run Intake first to produce a Ticket before editing source files."
+        if (!s.confirmed) {
+          output.error = "Confirmed-first gate: No confirmation for this task. The Conductor must call `question` to confirm the target before editing source files."
           return
         }
-      }
-
-      if (input.tool === "wiki_write" && input.args?.page === "runs" && !s.hasTicket) {
-        output.error = "Cannot log outcome before a Ticket exists."
-        return
       }
     },
 
     "tool.execute.after": async (input, output) => {
       const s = getState(input.sessionID)
 
+      // --- On Intake completion: record ticket ---
       if (input.tool === "task" && input.args?.name === "intake" && output.result) {
         try {
           const ticket = typeof output.result === "string" ? JSON.parse(output.result) : output.result
           if (ticket.tier !== undefined) {
             s.hasTicket = true
             s.tier = ticket.tier
+            s.confirmed = false
             s.groundRan = false
             s.plannerRan = false
+            s.dirtyTreeGuardFired = false
           }
         } catch {
           // Intake result was not valid JSON Ticket; leave state unchanged
         }
       }
 
-      if (input.tool === "worktree" && input.args?.action === "open") {
-        s.currentRunId = String(input.args.run_id)
-      }
+      // --- On Confirm completion: mark confirmed ---
+      // Detectable by a `question` tool call that selects a confirmation option.
+      // Simpler approach: Conductor can call wiki_write or another signal tool after confirm,
+      // but for now the Conductor agent prompt handles the logic and we trust it.
+      // The spine doesn't auto-set confirmed — the Conductor's question handling does.
+      // (This could be enhanced with a dedicated "confirm" custom tool later.)
 
-      // --- VERIFY TRIGGER (§8.6a) ---
-      // When a builder subagent finishes, run scoped tests on the changed files
+      // --- On Builder completion: VERIFY TRIGGER (§8.7a) ---
+      // Run scoped tests on the files the builder changed in the working tree.
       if (input.tool === "task" && typeof input.args?.name === "string" && input.args.name.startsWith("builder-")) {
-        const runId = s.currentRunId
-        if (runId) {
-          const wtPath = getWorktreePath(ctx.directory, runId)
-
-          // Get changed files via git diff in the worktree
-          const { stdout: diffStdout, stderr: diffStderr } = await ctx.$`git -C ${wtPath} diff --name-only`.quiet()
+        // Get changed files via git diff on the working tree
+        try {
+          const { stdout: diffStdout } = await ctx.$`git diff --name-only`.quiet()
           const changedFiles = diffStdout.toString().trim().split("\n").filter(Boolean)
 
           if (changedFiles.length > 0) {
-            // Load test impact map
             const impactMap = await loadTestImpactMap(ctx.directory)
             const scopedTests = findScopedTests(changedFiles, impactMap)
 
-            let testResult: string
             if (scopedTests.length > 0) {
-              // Run each scoped test command
               const seen = new Set<string>()
               let allPassed = true
               let outputLines: string[] = []
@@ -194,7 +234,7 @@ export const Spine: Plugin = async (ctx) => {
                 if (seen.has(entry.command)) continue
                 seen.add(entry.command)
 
-                const { exitCode, stdout, stderr } = await ctx.$`cd ${wtPath} && ${entry.command}`.quiet()
+                const { exitCode, stdout, stderr } = await ctx.$`bash -c ${entry.command}`.quiet()
                 const passed = exitCode === 0
                 if (!passed) allPassed = false
                 outputLines.push(`  ${entry.source} → ${entry.test}: ${passed ? "PASS" : "FAIL"}`)
@@ -204,35 +244,26 @@ export const Spine: Plugin = async (ctx) => {
                 }
               }
 
-              testResult = allPassed ? "PASS" : "FAIL"
+              const testResult = allPassed ? "PASS" : "FAIL"
               const summary = `\n[VERIFY] Scoped tests: ${testResult}\n` + outputLines.join("\n")
-              output.result = (output.result ? String(output.result) + summary : summary).trim()
+              output.output = (output.output ? String(output.output) + summary : summary).trim()
             } else {
               // No scoped tests found — fall back to full suite
-              const { exitCode, stdout, stderr } = await ctx.$`cd ${wtPath} && npm test 2>/dev/null || echo "no-test-runner"`.quiet()
+              const { exitCode, stdout, stderr } = await ctx.$`npm test 2>/dev/null || echo "no-test-runner"`.quiet()
               const fullOutput = (stdout.toString() + stderr.toString()).trim()
               if (fullOutput.includes("no-test-runner")) {
-                testResult = "SKIP"
-                output.result = (output.result ? String(output.result) + "\n[VERIFY] No test runner configured. Manual verification required." : "[VERIFY] No test runner configured. Manual verification required.").trim()
+                output.output = (output.output ? String(output.output) + "\n[VERIFY] No test runner configured. Manual verification required." : "[VERIFY] No test runner configured. Manual verification required.").trim()
               } else {
-                testResult = exitCode === 0 ? "PASS" : "FAIL"
-                output.result = (output.result ? String(output.result) + `\n[VERIFY] Full suite: ${testResult}\n${fullOutput.slice(0, 500)}` : `[VERIFY] Full suite: ${testResult}\n${fullOutput.slice(0, 500)}`).trim()
+                const testResult = exitCode === 0 ? "PASS" : "FAIL"
+                output.output = (output.output ? String(output.output) + `\n[VERIFY] Full suite: ${testResult}\n${fullOutput.slice(0, 500)}` : `[VERIFY] Full suite: ${testResult}\n${fullOutput.slice(0, 500)}`).trim()
               }
             }
           } else {
-            output.result = (output.result ? String(output.result) + "\n[VERIFY] No files changed — skipping tests." : "[VERIFY] No files changed — skipping tests.").trim()
+            output.output = (output.output ? String(output.output) + "\n[VERIFY] No files changed — skipping tests." : "[VERIFY] No files changed — skipping tests.").trim()
           }
-        } else {
-          output.result = (output.result ? String(output.result) + "\n[VERIFY] Warning: No active worktree found for this builder run." : "[VERIFY] Warning: No active worktree found for this builder run.").trim()
+        } catch (err) {
+          output.output = (output.output ? String(output.output) + `\n[VERIFY] Error running tests: ${err instanceof Error ? err.message : String(err)}` : `[VERIFY] Error running tests: ${err instanceof Error ? err.message : String(err)}`).trim()
         }
-      }
-
-      if (input.tool === "worktree" && (input.args?.action === "merge" || input.args?.action === "discard")) {
-        s.currentRunId = null
-        s.hasTicket = false
-        s.tier = -1
-        s.groundRan = false
-        s.plannerRan = false
       }
     },
   }

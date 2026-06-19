@@ -1,6 +1,6 @@
 ---
-description: "Run outcome log. Appended on every Merge. Used for self-improvement amortization (§13)."
-source_refs: "harness-build-spec-2.md (§13)"
+description: "Run outcome log. Appended at every Finalize. Used for self-improvement amortization (§13)."
+source_refs: "harness-build-spec-3.md (§13)"
 ---
 # Run Log
 

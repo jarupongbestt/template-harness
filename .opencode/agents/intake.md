@@ -9,7 +9,6 @@ permission:
   edit: deny
   task: deny
   wiki_write: deny
-  worktree: deny
 ---
 
 You are the Intake agent. Your job is to receive a user task request and produce a distilled Ticket.
