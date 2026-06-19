@@ -121,8 +121,6 @@ If any of 1–10 fail, fix the environment first — the rest of the spec assume
 | R6 | **Shared understanding before any edit** — the user confirms the exact target | §8.2 Confirm gate (`question` tool) | A16.3 |
 | R7 | First run costs more; usage amortizes | §13 (measurable) | A16.7 |
 | R8 | **No corruption; user owns git** — harness edits in place, never commits/merges; `/undo` always coherent | §10 execution model | A16.13, A16.14 |
-| R9 | **Undo coherence** — `/undo` reverts exactly one run's working-tree changes without affecting unrelated files | §10 in-place execution + no git writes | A16.15 |
-| R10 | **Dirty-tree guard** — harness checks for pre-existing uncommitted changes before editing | §10 pre-run cleanliness guard (P) | A16.16 |
 
 ---
 
@@ -273,7 +271,7 @@ Replaces v2's Merge. **Does no git.** On a green Verify:
    > Done. Changes are in your working tree, uncommitted. Preview with `docker compose up`. Keep them and they're yours to `git commit`/`push` when ready; or run `/undo` to discard this run.
 4. The harness takes **no further action.** Commit, push, merge, and rollback are the user's.
 
-- **Mechanical overall** (routing, scope audit, surfacing). The knowledge-write sub-step (§13, step 2) uses `documentation-and-adrs` for wiki page authorship. Notably v3 drops `git-workflow-and-versioning` from the harness — git workflow is the user's, not the harness's.
+- **No skill** (mechanical). Notably v3 drops `git-workflow-and-versioning` from the harness — git workflow is the user's, not the harness's.
 
 ### 8.9 Test-engineer — [N] · SUBAGENT (independent), Tier 2 / critical only
 
@@ -371,7 +369,7 @@ This section replaces v2's worktree isolation. It is the heart of v3.
 - Because the *harness* never commits, this boundary is always under the user's explicit control.
 
 **Pre-run cleanliness guard (P).**
-- Before any source edit, the spine hook (`tool.execute.before`) checks `git status`. If the working tree is **dirty** (the user has their own uncommitted work), the hook **blocks the action and signals the Conductor** — it does not call `question` itself (hooks cannot call tools). The Conductor then asks via `question`: *"You have uncommitted changes. Commit or stash them first so `/undo` only affects this run?"* This prevents a later `/undo` from clobbering the user's unrelated work and keeps each run's changeset clean for the scope-audit. Only the first source edit in a task triggers this check; subsequent edits pass freely once confirmed.
+- Before Intake edits anything, the spine checks `git status`. If the working tree is **dirty** (the user has their own uncommitted work), the Conductor asks via `question`: *"You have uncommitted changes. Commit or stash them first so `/undo` only affects this run?"* This prevents a later `/undo` from clobbering the user's unrelated work and keeps each run's changeset clean for the scope-audit.
 
 **No parallel runs in v3.**
 - Worktrees were what enabled parallel/headless runs (old R6). v3 is single-stream interactive by design. If you later need batch/headless parallelism, that is a separate mode built on `opencode serve` + ephemeral clones — out of scope here. Do not reintroduce worktrees into the interactive path.
@@ -412,7 +410,7 @@ One plugin, one custom tool. Nothing else is code.
     * `false` and the actor is the **Conductor** → block and return "call `question` to confirm the target before editing."
     * `false` and the actor is a **subagent** → block and return "not confirmed — stop and return control to the Conductor" (subagents have no `question` tool and must never ask the user; they bounce).
   Key the flag to the **task / starting turn id**, not the session — it resets on each new user requirement so a prior task's confirmation never carries over (this is what stops "ask once then never again"). Exempt `knowledge/` and the `wiki_write` tool. Only the Conductor sets the flag, and only by recording a `question` answer — never defaulted, never inferred.
-- `tool.execute.before` on `task`/`edit`: **route-floor gate** — blocks downstream stages (Ground/Planner/Builder) unless `confirmed[taskId]` is `true` for the current task. Additionally, if the tier requires Ground/Planner and they haven't run, block and tell the Conductor to route up. This ensures Route never fires before Confirm, and Builder never fires before Ground/Planner.
+- `tool.execute.before` on `task`/`edit`: **route-floor gate** — if the tier requires Ground/Planner and they haven't run, block and tell the Conductor to route up.
 - `tool.execute.before` on `bash`: **git-write guard** — block any git subcommand that mutates (`commit`, `branch`, `merge`, `push`, `checkout`, `reset`, `restore`, `stash`, `worktree`, `rebase`, `cherry-pick`). Allow read-only git. This enforces §10 even if a subagent's toolset is misconfigured.
 - `tool.execute.after` on Builder's edits: **verify trigger** — run scoped tests; surface pass/fail to the Conductor.
 
@@ -449,7 +447,7 @@ Effect over N runs: scans **narrow**, routing **sharpens**, briefs **shrink**. P
   plugins/
     spine.ts                          # the only plugin
   tools/
-    wiki_write.ts                     # the only custom tool
+    wiki-write.ts                     # the only custom tool
   commands/
     bootstrap.md                      # /bootstrap (§7.2)
 knowledge/
@@ -458,15 +456,6 @@ AGENTS.md                             # installs addyosmani skills; points stage
 ```
 
 Gone from v2: `.harness/wt/` and `tools/worktree.ts`.
-
-**Config requirement — `opencode.json`:**
-```json
-{
-  "default_agent": "conductor",
-  "snapshot": true
-}
-```
-Snapshots must be **on** (`snapshot: true`). This is what enables the user's `/undo` and `/redo` (Preflight #8). Without it, the undo coherence guarantee (§10, R9) is broken.
 
 ---
 
@@ -525,14 +514,15 @@ From `github.com/addyosmani/agent-skills` (install via `AGENTS.md` + the `skill`
 | Confirm | — (mechanical: `question` tool) |
 | Ground | `context-engineering`, `source-driven-development` |
 | Planner | `planning-and-task-breakdown` |
-| Builder-junior | `incremental-implementation`, `test-driven-development`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
-| Builder-senior | `incremental-implementation`, `test-driven-development`, `code-review-and-quality`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
+| Builder (junior/senior) | `incremental-implementation`, `test-driven-development`, `karpathy-guidelines`, `frontend-ui-engineering` (UI), `api-and-interface-design` (APIs) |
 | Test-engineer | `test-driven-development` (+ `test-engineer` persona) |
-| Critic | `code-review-and-quality`, `doubt-driven-development` (+ `security-and-hardening`) |
+| Critic | `code-review-and-quality`, `karpathy-guidelines`, `doubt-driven-development` (+ `security-and-hardening`) |
 | Verify (run) | mechanical — no skill |
 | Finalize | `documentation-and-adrs` (knowledge write only) |
 | Bootstrap | `spec-driven-development`, `documentation-and-adrs` |
 
 Dropped from v2: `git-workflow-and-versioning` — git is the user's domain, not the harness's.
+
+`karpathy-guidelines` is from `github.com/multica-ai/andrej-karpathy-skills` (not addyosmani). It is the **anti-over-engineering** default: minimum code, surgical changes, every changed line traces to the request. Per the skill's own tradeoff note it biases caution over speed, so apply judgment on trivial tasks rather than rigidly — it is a behavioral default, not a hard gate. Start here; only add a structural check (review rubric, diff-size signal) later **if** the skill alone proves insufficient. Don't build that apparatus up front.
 
 Their **progressive disclosure** design (SKILL.md is the entry point; references load only when needed) is the same token discipline as the knowledge `index.md` → wiki-page pattern, and as keeping each subagent's seeded context tight. Reuse it.

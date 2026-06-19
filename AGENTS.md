@@ -13,12 +13,12 @@ Per §17 of `harness-build-spec-3.md`, each stage loads the relevant skill via t
 | **Confirm** | _(mechanical — `question` tool)_ |
 | **Ground** | `context-engineering`, `source-driven-development` |
 | **Planner** | `planning-and-task-breakdown` |
-| **Builder-junior** | `incremental-implementation`, `test-driven-development`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
-| **Builder-senior** | `incremental-implementation`, `test-driven-development`, `code-review-and-quality`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
+| **Builder-junior** | `incremental-implementation`, `test-driven-development`, `karpathy-guidelines`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
+| **Builder-senior** | `incremental-implementation`, `test-driven-development`, `karpathy-guidelines`, `code-review-and-quality`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
 | **Test-engineer** | `test-driven-development` |
-| **Critic** | `code-review-and-quality`, `doubt-driven-development`, `security-and-hardening` |
+| **Critic** | `code-review-and-quality`, `karpathy-guidelines`, `doubt-driven-development`, `security-and-hardening` |
 | **Verify (run)** | _(mechanical — no skill)_ |
-| **Finalize** | `documentation-and-adrs` (knowledge write only) |
+| **Finalize** | _(mechanical — no skill)_ |
 | **Bootstrap** | `spec-driven-development`, `documentation-and-adrs` |
 
 ## Usage

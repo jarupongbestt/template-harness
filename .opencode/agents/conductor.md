@@ -51,8 +51,6 @@ Call the `question` tool with Intake's `restatement` + `target_refs` + `candidat
 - The `question` tool is granted to you (Conductor) only — no subagent has it.
 - After confirmation, the spine hook silently allows all downstream edits.
 
-**Important:** After the user confirms, run `git diff --name-only` and pass the changed files list to builders so they know what to work on. (This is read-only git; the spine hook allows it.)
-
 ### 3. Route — PASSIVE (no LLM)
 From the Ticket's `tier` and `confidence`:
 - **Tier 0** (easy, high confidence): Skip Ground + Planner. Route to `builder-junior`.

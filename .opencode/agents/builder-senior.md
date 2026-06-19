@@ -48,4 +48,5 @@ When the Conductor asks you to review a builder-junior diff:
 ## Skills available
 - `incremental-implementation`
 - `test-driven-development`
+- `karpathy-guidelines`
 - `code-review-and-quality`

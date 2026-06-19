@@ -50,5 +50,6 @@ security: pass|flag
 
 ## Skills available
 - `code-review-and-quality`
+- `karpathy-guidelines`
 - `doubt-driven-development`
 - `security-and-hardening`
