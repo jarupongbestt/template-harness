@@ -1,5 +1,31 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "conductor",
-  "snapshot": true
+  "snapshot": true,
+  "agent": {
+    "conductor": {
+      "model": "opencode/deepseek-v4-flash-free"
+    },
+    "intake": {
+      "model": "opencode/deepseek-v4-flash-free"
+    },
+    "planner-junior": {
+      "model": "opencode/deepseek-v4-flash-free"
+    },
+    "planner-senior": {
+      "model": "opencode/deepseek-v4-flash-free"
+    },
+    "builder-junior": {
+      "model": "opencode/deepseek-v4-flash-free"
+    },
+    "builder-senior": {
+      "model": "opencode/deepseek-v4-flash-free"
+    },
+    "critic": {
+      "model": "opencode/deepseek-v4-flash-free"
+    },
+    "test-engineer": {
+      "model": "opencode/deepseek-v4-flash-free"
+    }
+  }
 }

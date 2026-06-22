@@ -1,0 +1,12 @@
+{
+  "small": [
+    "opencode/deepseek-v4-flash-free",
+    "zai-coding-plan/glm-4.7",
+    "deepseek/deepseek-v4-flash"
+  ],
+  "big": [
+    "opencode/deepseek-v4-flash-free",
+    "zai-coding-plan/glm-5.2",
+    "deepseek/deepseek-v4-flash"
+  ]
+}

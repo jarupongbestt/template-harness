@@ -5,9 +5,10 @@ import path from "node:path"
 interface SessionState {
   hasTicket: boolean
   tier: number
-  confirmed: boolean
-  groundRan: boolean
-  plannerRan: boolean
+  /** Per-task approval flag, keyed by taskId (session monotonic counter). Set only by Conductor recording a Proceed answer to the short proceed gate (§8.3). */
+  plan_approved: Map<string, boolean>
+  /** Monotonic counter per session, incremented at each new intake. */
+  taskCounter: number
   userLanguage: string
   dirtyTreeGuardFired: boolean
 }
@@ -25,14 +26,17 @@ function getState(sessionID: string): SessionState {
     state.set(sessionID, {
       hasTicket: false,
       tier: -1,
-      confirmed: false,
-      groundRan: false,
-      plannerRan: false,
+      plan_approved: new Map(),
+      taskCounter: 0,
       userLanguage: "en",
       dirtyTreeGuardFired: false,
     })
   }
   return state.get(sessionID)!
+}
+
+function nextTaskId(s: SessionState): string {
+  return `task_${++s.taskCounter}`
 }
 
 const SOURCE_TOOLS = new Set(["edit", "write", "bash"])
@@ -122,7 +126,6 @@ export const Spine: Plugin = async (ctx) => {
 
       // --- Dirty-tree guard (§10) ---
       // On the first source-touching action of a task, check if working tree is dirty.
-      // If so, block and signal the Conductor to ask the user to commit/stash first.
       if (isSourceTool(input.tool) && !isExempt(input.args ?? {})) {
         if (!s.dirtyTreeGuardFired && s.hasTicket) {
           s.dirtyTreeGuardFired = true
@@ -138,50 +141,38 @@ export const Spine: Plugin = async (ctx) => {
         }
       }
 
+      // --- Plan-approved gate (§12) ---
+      // On every source edit/write/mutating-bash: check the per-task plan_approved flag.
+      // Hooks only fire on the Conductor (§2), so this gate protects Conductor-level edits.
+      // Subagent protection is via constructed toolset + route-floor gate below.
+      if (isSourceTool(input.tool) && !isExempt(input.args ?? {})) {
+        // Determine the current taskId. The Conductor is expected to set currentTaskId
+        // on itself after each intake (via the prompt). If none set, use the latest key.
+        const currentTaskKey = getCurrentTaskKey(s)
+        const approved = currentTaskKey ? s.plan_approved.get(currentTaskKey) : false
+
+        if (!approved) {
+          // Block — tell the Conductor to present the plan and run the short proceed gate.
+          output.error = `PLAN_NOT_APPROVED: No plan approved for this task. Present the Planner's user_summary as a plain-language message, then call the \`question\` tool with exactly 2 options (1. ▶ Proceed / 2. 💬 Ask / adjust). The build may not start until the user picks Proceed.`
+          return
+        }
+        // If approved, pass silently — no prompt, no block.
+      }
+
       // --- Route-floor gate (§12) ---
-      // Block Builder/Ground/Planner spawning if required upstream stages haven't run.
+      // Block Builder/Critic spawning if the plan is not approved for the current task.
       if (input.tool === "task" && input.args?.name) {
         const subagentName = String(input.args.name)
 
-        // Confirm gate must pass before any downstream stage
-        if ((subagentName === "ground" || subagentName === "planner" || subagentName.startsWith("builder-")) && !s.confirmed) {
-          output.error = "Confirmed-first gate: Task not yet confirmed. The Conductor must call `question` to confirm the target with the user before spawning downstream stages. Return control to the Conductor."
-          return
-        }
+        // Any subagent spawn that could touch source requires plan approval.
+        if ((subagentName.startsWith("builder-") || subagentName === "critic" || subagentName === "test-engineer")) {
+          const currentTaskKey = getCurrentTaskKey(s)
+          const approved = currentTaskKey ? s.plan_approved.get(currentTaskKey) : false
 
-        if (subagentName.startsWith("builder-")) {
-          if (s.tier === 1 && !s.groundRan) {
-            output.error = "Route-floor gate: Tier 1 requires Ground to run before Builder. Route up."
+          if (!approved) {
+            output.error = `Route-floor gate: Cannot spawn "${subagentName}" — plan not yet approved. The Conductor must present the Planner's user_summary and run the short proceed gate (§8.3) before any build stage.`
             return
           }
-          if (s.tier >= 2) {
-            if (!s.groundRan) {
-              output.error = "Route-floor gate: Tier 2 requires Ground to run before Builder. Route up."
-              return
-            }
-            if (!s.plannerRan) {
-              output.error = "Route-floor gate: Tier 2 requires Planner to run before Builder. Route up."
-              return
-            }
-          }
-        }
-
-        if (subagentName === "ground") {
-          s.groundRan = true
-        }
-        if (subagentName === "planner") {
-          s.plannerRan = true
-        }
-      }
-
-      // --- Confirmed-first gate (§12, silent check on source edits) ---
-      // Blocks raw source edits from the Conductor before the user has confirmed the target.
-      // Per §2, hooks on subagents don't fire, so this gate only protects Conductor-level edits.
-      // Subagent enforcement is via constructed toolset.
-      if (isSourceTool(input.tool) && !isExempt(input.args ?? {})) {
-        if (!s.confirmed) {
-          output.error = "Confirmed-first gate: No confirmation for this task. The Conductor must call `question` to confirm the target before editing source files."
-          return
         }
       }
     },
@@ -189,34 +180,47 @@ export const Spine: Plugin = async (ctx) => {
     "tool.execute.after": async (input, output) => {
       const s = getState(input.sessionID)
 
-      // --- On Intake completion: record ticket ---
+      // --- On Intake completion: record ticket, set currentTaskId ---
       if (input.tool === "task" && input.args?.name === "intake" && output.result) {
         try {
           const ticket = typeof output.result === "string" ? JSON.parse(output.result) : output.result
           if (ticket.tier !== undefined) {
+            const taskId = nextTaskId(s)
             s.hasTicket = true
             s.tier = ticket.tier
-            s.confirmed = false
-            s.groundRan = false
-            s.plannerRan = false
             s.dirtyTreeGuardFired = false
+            // Reset: new intake = new task, not yet approved
+            // (plan_approved map stays but has no entry for this taskId yet)
+            // Conductor will set approval when Proceed is picked.
           }
         } catch {
           // Intake result was not valid JSON Ticket; leave state unchanged
         }
       }
 
-      // --- On Confirm completion: mark confirmed ---
-      // Detectable by a `question` tool call that selects a confirmation option.
-      // Simpler approach: Conductor can call wiki_write or another signal tool after confirm,
-      // but for now the Conductor agent prompt handles the logic and we trust it.
-      // The spine doesn't auto-set confirmed — the Conductor's question handling does.
-      // (This could be enhanced with a dedicated "confirm" custom tool later.)
+      // --- On question tool result: detect Proceed answer (§8.3) ---
+      // If the user selected option 1 (Proceed), set plan_approved for the current task.
+      if (input.tool === "question" && output.result) {
+        try {
+          const result = typeof output.result === "string" ? JSON.parse(output.result) : output.result
+          // The question tool returns structured output. Detect "Proceed" (option 1).
+          // Try common formats: { selected: "1" }, { option: "0"/0 }, { value: "Proceed" }, etc.
+          const selected = result?.selected ?? result?.option ?? result?.value ?? ""
+          const selectedStr = String(selected).trim()
+          // Option 1 is "▶ Proceed" — match by "1" or "Proceed"
+          if (selectedStr === "1" || selectedStr === "0" || /proceed/i.test(selectedStr)) {
+            const currentTaskKey = getCurrentTaskKey(s)
+            if (currentTaskKey) {
+              s.plan_approved.set(currentTaskKey, true)
+            }
+          }
+        } catch {
+          // Parsing failed — leave state unchanged
+        }
+      }
 
       // --- On Builder completion: VERIFY TRIGGER (§8.7a) ---
-      // Run scoped tests on the files the builder changed in the working tree.
       if (input.tool === "task" && typeof input.args?.name === "string" && input.args.name.startsWith("builder-")) {
-        // Get changed files via git diff on the working tree
         try {
           const { stdout: diffStdout } = await ctx.$`git diff --name-only`.quiet()
           const changedFiles = diffStdout.toString().trim().split("\n").filter(Boolean)
@@ -267,4 +271,11 @@ export const Spine: Plugin = async (ctx) => {
       }
     },
   }
+}
+
+/** Get the current task key — the latest task whose plan_approved status matters.
+ *  This uses the highest-numbered task key from the taskCounter. */
+function getCurrentTaskKey(s: SessionState): string | null {
+  if (s.taskCounter === 0) return null
+  return `task_${s.taskCounter}`
 }

@@ -1,5 +1,5 @@
 ---
-description: "Generate initial knowledge layer from existing codebase: walk repo structure, generate index.md, wiki pages per area, test-impact.md skeleton"
+description: "Generate initial knowledge layer from existing codebase: walk repo structure, generate index.md, wiki pages per area, test-impact.md skeleton (harness-build-spec-4.md §7.2)"
 ---
 
 You are running the /bootstrap command. Your task is to generate the initial knowledge layer from the existing codebase.
