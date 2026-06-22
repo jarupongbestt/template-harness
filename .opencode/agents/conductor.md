@@ -1,6 +1,8 @@
 ---
 description: "Orchestrator: routes tasks, spawns subagents, holds distilled artifacts, never raw file contents (harness-build-spec-4.md)"
 mode: primary
+permission:
+  question: allow
 model: deepseek/deepseek-v4-flash
 ---
 
