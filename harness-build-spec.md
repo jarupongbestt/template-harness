@@ -166,7 +166,8 @@ user msg ---> |  CONDUCTOR  (primary agent = the orchestrator)|
                       |
    subagents (real LLM work, clean context, one task each):
        INTAKE · PLANNER-JUNIOR · PLANNER-SENIOR
-       BUILDER-JUNIOR · BUILDER-SENIOR · TEST-ENGINEER · CRITIC
+       BUILDER-JUNIOR · BUILDER-SENIOR
+       TEST-ENGINEER-JUNIOR · TEST-ENGINEER-SENIOR · CRITIC
 
    edits land IN PLACE on the working tree, UNCOMMITTED.
    git (commit/push/merge) and /undo,/redo are the USER's, after the harness stops.
@@ -219,16 +220,21 @@ tiers. **There is no Ground stage and no Merge stage.**
   matched wiki page(s) → set `scope_hints` to those `source_refs`. This is a
   **light** triage scan, enough to set tier and list candidates — **not** a deep
   code read (that is the Planner's job). Broad scan only when no hint matches.
-- **Tier + confidence:** one page + one dir + known pattern + high confidence → low
-  tier; multiple pages / cross-cutting / greenfield / no match / low confidence →
-  high tier. Tier is a **model selector** for the Planner and a builder-level floor
-  — it does not gate *whether* planning happens.
+- **Tier + confidence (MUST):** tier is the **model selector** for Planner /
+  Builder / Test-engineer and the review depth. Rubric:
+  * **Tier 0/1** — one or few pages, a known pattern, bounded blast radius.
+  * **Tier 2** — complex / cross-cutting / greenfield / low confidence, **OR**
+    load-bearing or sensitive: touches auth / money / data, sits on a primary user
+    flow, or has many `depends_on` entries in test-impact.md. **Importance routes to
+    Tier 2 even when the change is easy to write** — an easy-but-load-bearing change
+    gets the senior test-engineer + Critic, because that is the code most damaging to
+    get subtly wrong. Tier does not gate *whether* planning or testing happens.
 - **Change type (MUST):** classify the task as `cosmetic | feature | bugfix | refactor`.
-  This is **orthogonal to tier**: tier decides *who* writes the test and how much
-  review (risk axis); `change_type` decides *whether a test is written at all*
-  (§11). A new feature is a `feature` even when it is trivial, so it is always
-  tested — small ≠ untested. Only `cosmetic` skips tests. Do not infer test policy
-  from the tier number.
+  This is **orthogonal to tier**: `change_type` decides *whether a test is written at
+  all* (§11), tier decides *which test-engineer model writes it* and how heavy the
+  review is. A new feature is a `feature` even when trivial, so it is always tested —
+  small ≠ untested. Only `cosmetic` skips tests. Do not infer test policy from the
+  tier number.
 - **Acceptance criteria (MUST):** emit explicit, checkable criteria — the
   **independent source of truth** the tests anchor to (§11). Intake defines *what
   correct means*; the Planner defines *how* — keep them in separate agents or tests
@@ -317,56 +323,122 @@ even then, keep it on the Conductor — single site is the design).
 ### 8.4 Planner — [N] (R5) · SUBAGENT (always), two model levels, self-grounding
 - **Fires every task.** Two agent defs: **planner-junior** (cheap) and
   **planner-senior** (capable), same skills, different `model:`.
-- **Self-grounds (MUST):** reads the wiki pages Intake named, then code **only
-  within `scope_hints` source_refs** — the deep context read needed to plan. No
-  `index.md` re-scan (Intake already did it and handed over `scope_hints`).
+- **Self-grounds (MUST):** in order —
+  1. Read `knowledge/index.md` → follow `scope_hints` from Intake to the matched wiki
+     page(s). No full re-scan.
+  2. Read code within `scope_hints.source_refs` only — the deep read needed to plan.
+  3. **Read `knowledge/test-impact.md`** for every source file in scope. Two passes:
+
+     **Pass A — direct test lookup (skip / extend / create):**
+     ```
+     source file in test-impact.md, for the new case's acceptance criteria?
+       ├─ covered already, AND the `covers` annotation matches the new criteria
+       │     → NO test_subtask  → no test-engineer is spun for this case (skip)
+       ├─ test file exists but does NOT cover the new case
+       │     → test_subtask.action = "extend"   → test-engineer spun
+       └─ no entry at all
+             → test_subtask.action = "create"   → test-engineer spun
+     ```
+     **Skip is real cost savings:** when coverage already exists, no test gets
+     written and no test-engineer subagent is dispatched — the task is build +
+     regression-run only. As the project's coverage grows, more feature work hits the
+     skip path; this is the amortization in R7. **But trust `test-impact.md` only when
+     the `covers` annotation actually matches the new case's acceptance criteria** —
+     a source-file-name match alone is not enough. If `covers` is vague or doesn't
+     clearly cover the new criteria, treat it as "does not cover" → `extend`.
+
+     **Pass B — reverse dependency lookup (regression scope):**
+     For each source file being changed, find **all other test files** in
+     test-impact.md whose `depends_on` annotation includes that file or any
+     function/export it exposes. These are tests for code that *calls* the thing
+     being changed — they must be included in the Verify run even though their source
+     files are not directly edited. Collect them into `regression_tests` on the task.
+     If a regression test's coverage looks like it might break from the change (based
+     on the code read in step 2), flag it as `regression_risk: true` so Verify pays
+     attention to its result.
+
+     Without Pass B, "fix calculateTax()" only runs `tax.test.ts` and misses
+     `checkout.test.ts` and `invoice.test.ts` which both call calculateTax() —
+     the change could break them silently.
 - **Decompose (MUST):** produce two distinct outputs.
   * **Internal `task_list`** — the machine plan the Conductor dispatches from: each
-    task self-contained (`{ desc, files, level: easy|hard, acceptance }`), with
-    dependency order. For a trivial change it is one task; for a complex change, thin
-    vertical slices. **The user never sees this raw.**
-  * **`user_summary`** — a short, plain-language explanation for the human (§8.3,
-    Part 1): the problem as understood and what will be done, in everyday words.
-    **No code, no `file:line` locators, no `level` tags, minimal jargon.** This is the
-    only thing presented at Approve.
+    task self-contained with dependency order. **The user never sees this raw.**
+    Schema per task:
+    ```
+    { desc, files, level: easy|hard, acceptance,
+      test_subtask?: {
+        action: "create" | "extend",
+        file: "tests/x.test.ts",
+        anchors: ["case A", "case B"]   // from acceptance criteria, not implementation
+      },
+      regression_tests?: [              // from Pass B — tests for callers/dependents
+        { file: "tests/checkout.test.ts", regression_risk: true },
+        { file: "tests/invoice.test.ts",  regression_risk: false }
+      ]
+    }
+    ```
+    **Test subtask rule (MUST):** for a task where `change_type` is `feature` or
+    `bugfix`, the Planner emits a `test_subtask` **unless Pass A found the case
+    already covered** (then it is omitted and the test-engineer is skipped). Presence
+    of a `test_subtask` is the **sole trigger** that spins a test-engineer (§8.8) —
+    no test_subtask, no test author. `action: extend` if the test file exists;
+    `action: create` if not. The Builder never authors the test (§8.5).
+  * **`user_summary`** — a short, plain-language explanation for the human (§8.3):
+    problem as understood + what will be done, in everyday words. No code, no
+    `file:line`, no `level` tags, minimal jargon. This is the only thing presented
+    at Approve.
 - **Skill:** `planning-and-task-breakdown`, `context-engineering`,
-  `source-driven-development`, `interview-me` (for the plain-language summary and for
-  formulating clarification when confidence is low). The Planner never calls
-  `question` — it produces text; the Conductor presents it and runs the gate.
+  `source-driven-development`, `interview-me`. The Planner never calls `question`.
 
-### 8.5 Builder — [N] · SUBAGENT (always), two model levels, per-task dispatch
+### 8.5 Builder — [N] · SUBAGENT (always), two model levels, make-green only
 - Two agent defs: **builder-junior** (cheap) and **builder-senior** (capable). Same
   skills, different `model:`.
 - **Dispatch per task by the Planner's `level` tag**, at or above the tier's builder
   floor: an `easy` task → junior (unless the tier floor is senior); a `hard` task →
   senior. The Conductor reads `level` and dispatches accordingly.
-- **In:** the approved task + its acceptance criteria + the scoped files. **Out:**
-  the edits (in place) + a short diff summary. The Conductor never sees raw file
-  contents.
+- **In:** the approved task + its acceptance criteria + `change_type` + the scoped
+  **source** files + the **already-written failing test** (from the test-engineer,
+  §8.8). **Out:** the source edits (in place) + a short diff summary. The Conductor
+  never sees raw file contents.
+- **Make-green only — the Builder never writes or edits tests (MUST).** The test
+  arrives red, authored independently by the test-engineer. The Builder's single job
+  is to write source code that makes that red test green, honestly — implementing the
+  behavior the test demands, **never weakening, deleting, or gaming the test to pass.**
+  Removing test-authoring from the Builder is what eliminates "rubber-stamp with
+  yourself": the agent writing the code cannot also shape the bar it must clear.
+- **If the Builder believes the test is wrong, it MUST NOT touch it.** It stops and
+  bounces up for adjudication (§8.8) — it has no write access to the test dir to do
+  otherwise.
 - **Edits land directly on the working tree, uncommitted.** No worktree, no branch,
   no commit.
-- **Stay in scope (MUST):** Builder edits **only** files in the task's
-  `files`/`scope_hints`. If it must touch a file outside scope, it **stops and
-  bounces up** rather than silently editing it.
-- **Escalation (MUST):** on a Verify failure, the **same level** retries once. Fail
-  again → **escalate to builder-senior** with the failure context. This is the
-  safety net for a mis-tagged "easy" task. Retry edits **in place**; no git reset.
-  If the change is bigger than the plan claimed, the Builder **stops and bounces
-  up** to request a re-Plan.
-- **Skill:** `incremental-implementation`, `test-driven-development`,
-  `karpathy-guidelines`, + `frontend-ui-engineering` (UI) / `api-and-interface-design`
-  (APIs).
+- **Stay in scope (MUST):** Builder edits **only** source files in the task's
+  `files`/`scope_hints`. To touch a file outside scope, it **stops and bounces up**.
+- **Escalation (MUST):** see the make-green loop in §8.8 — same-level retry, then
+  senior, then adjudication. Retry edits **in place**; no git reset. If the change is
+  bigger than the plan claimed, the Builder **stops and bounces up** for a re-Plan.
+- **Skill:** `incremental-implementation`, `test-driven-development` (green-phase
+  discipline only — make the red test pass properly), `karpathy-guidelines`,
+  + `frontend-ui-engineering` (UI) / `api-and-interface-design` (APIs).
 - **Enforcement:** Builder subagents get a **constructed toolset** (C):
-  `read`/`edit`/`write` on source, `read`-only git; **no raw write to `knowledge/`**,
-  **no write-capable git**, **no `task`**, **no `question`**. Containment by
-  non-grant.
+  `read`/`edit`/`write` on **source dirs only**, `read` on test dirs (to see what it
+  must satisfy) but **no write to test dirs**, `read`-only git; **no raw write to
+  `knowledge/`**, **no write-capable git**, **no `task`**, **no `question`**.
+  Containment by non-grant — the no-test-write rule is structural, not a guideline.
 
 ### 8.6 Verify — [N] (R4)
 Two separate concerns:
-- **(a) Run tests — PASSIVE primary hook (P), NOT a subagent.** On the files Builder
-  touched, run the **scoped** tests (touched files ∩ `test-impact.md`). Mechanical:
-  run, read exit code, surface result. Falls back to the full suite only when the
-  impact map is empty.
+- **(a) Run tests — PASSIVE primary hook (P), NOT a subagent.** Three layers, in
+  order:
+  1. **Direct tests:** `test_subtask.file` — the test the test-engineer just wrote or
+     extended for this task.
+  2. **Regression tests:** all files listed in `task.regression_tests` — tests for
+     callers and dependents identified by the Planner in Pass B. These run even
+     though their source files were not directly edited. Any file with
+     `regression_risk: true` gets its failure surfaced prominently.
+  3. **Fallback:** if neither list exists (impact map is empty / cold start), run
+     the full suite.
+  Mechanical: run, read exit code, surface result. A regression_risk failure is
+  treated the same as a direct test failure — Builder must fix before proceeding.
 - **(b) Code review — tier-scaled, per slice (not end-of-task):**
   * **Tier 0:** none. The test/smoke pass is the gate.
   * **Tier 1:** **builder-senior reviews builder-junior's diff** (lightweight).
@@ -378,7 +450,15 @@ Two separate concerns:
 1. **Scope audit.** Compute `git diff --name-only` (read-only). If any touched file
    is outside the plan's declared scope, **surface it to the user** ("this run also
    modified `docker-compose.yml` — expected?") rather than hiding it.
-2. **Self-improvement write** (§13): `log_outcome` + `wiki_write` updates.
+2. **Self-improvement write** (§13): `log_outcome` + `wiki_write` updates +
+   **`test-impact.md` update (MUST)**. For every `test_subtask` that ran this
+   session, write or update the `source → test file` entry:
+   - `action: create` → add a new row.
+   - `action: extend` → verify the row already exists (it should); update the
+     `covers` annotation if the anchors added new cases.
+   This is what keeps the Planner's test-impact.md check accurate on the next run.
+   If this step is skipped, the next Planner will create duplicate tests or miss
+   existing coverage — exactly what the check is there to prevent.
 3. **Surface the result and STOP.** Tell the user, plainly:
    > Done. Changes are in your working tree, uncommitted. Preview with
    > `docker compose up`. Keep them and they're yours to `git commit`/`push` when
@@ -388,15 +468,82 @@ Two separate concerns:
 - **Skill:** `documentation-and-adrs` (knowledge write only). Git workflow is the
   user's, not the harness's.
 
-### 8.8 Test-engineer — [N] · SUBAGENT (independent), Tier 2 / critical only
-- Writes tests **from the acceptance criteria**, and **never sees the plan or
-  implementation** — the anti-rubber-stamp guarantee. The Builder then makes them
-  pass.
-- **Fires:** Tier 2, or any task touching auth / money / data, per slice. Lower
-  stakes → the Builder writes its own tests (§11).
+### 8.8 Test-engineer — [N] · SUBAGENT (independent), two model levels
+
+**The independent test author for the whole harness — the Builder never writes
+tests.** Independence cannot be faked inside one agent ("I'll write the test first
+and promise not to peek at the code I'm about to write") — same context window, same
+recall, so the test ends up shaped to the implementation anyway. The only enforceable
+independence is **a separate context**, i.e. a separate subagent. So all tests are
+authored here.
+
+- **Two agent defs:** **test-engineer-junior** (cheap) and **test-engineer-senior**
+  (capable), same skills, different `model:` — mirroring the planner/builder pair.
+- **Trigger:** **a task carries a `test_subtask`** (§8.4). That is the only trigger.
+  No `test_subtask` (cosmetic, or Pass A found the case already covered) → no
+  test-engineer is spun.
+- **Model by tier:** Tier 0/1 → test-engineer-junior. Tier 2 / load-bearing →
+  test-engineer-senior, and the Critic (§8.9) audits afterward. Tier selects the
+  model and the review depth, **not** whether a test author exists.
+- **Writes from the acceptance criteria only**, and **never sees the plan or the
+  implementation** — the anti-rubber-stamp guarantee. Output is a **red** test
+  (fails before the code exists).
+- Coverage scales with model: junior → happy path + key edge/error cases; senior →
+  + concurrency + boundary values per the `test-driven-development` skill matrix.
+- **Tests are real project files** written into the test directory, in place and
+  uncommitted (§10). After the user commits, they are permanent regression tests,
+  found by future Verify runs via `test-impact.md`.
 - **Skill:** `test-driven-development` (+ `test-engineer` persona).
 
-### 8.9 Critic — [N] · SUBAGENT (independent reviewer), Tier 2
+#### 8.8.1 The make-green loop and test adjudication — [N]
+
+The test is authored independently and the Builder cannot edit it — so a *badly
+written* test (asserts the wrong value, expects behavior that contradicts the
+criteria) would deadlock: the Builder writes correct code, the test stays red, and
+the Builder either spins forever or starts deforming the code to satisfy a wrong
+test. There must be a path back to fix the test — **but it must not become a back
+door to rubber-stamping** (Builder declares "test is wrong" whenever its code fails).
+So the loop has a gate: the Builder may *claim* the test is wrong but cannot *decide*
+it; a fresh test-engineer adjudicates against the acceptance criteria.
+
+**Loop 1 — Builder make-green (inside the build step).**
+```
+test-engineer writes test (red)  →  builder makes green
+  ├─ green                                   → slice passes
+  ├─ red, but error is DIFFERENT each try    → builder retries (real progress)
+  └─ STOP and bounce up when EITHER:
+        • 3 reds in a row, OR
+        • the identical error twice (no progress — don't burn a 3rd try)
+     Builder bounces to the Conductor with evidence:
+        the diff it wrote · value got vs value the test expected ·
+        the acceptance criterion it believes it satisfied
+     (escalation: the 2nd failing try escalates builder-junior → builder-senior
+      before the bounce, so a mis-tagged "easy" task gets the stronger model first)
+```
+The Builder **never edits the test** to escape this loop — it has no test-dir write.
+
+**Loop 2 — adjudication (a fresh test-engineer, context-isolated).**
+The Conductor spawns a **new** test-engineer (not the one that wrote the test — that
+one would defend its own work) to judge **the test against the acceptance criteria**,
+not against the Builder's code:
+```
+fresh test-engineer adjudicates:
+  ├─ test is wrong (contradicts criteria)   → fix the test → back to Loop 1
+  ├─ test is right, Builder misread it       → return to Builder with a clarifying note
+  └─ the criteria themselves are ambiguous   → bounce to the USER (re-open Approve, §8.3)
+```
+Adjudication runs **once**. If the slice still will not go green after one
+adjudication round, **bounce to the user** — because a test that a fresh author
+confirmed against the criteria, plus a Builder that still can't satisfy it, almost
+always means the *acceptance criteria* are ambiguous or self-contradictory. That is a
+requirement-level problem only the user can resolve; looping the two agents further
+just burns tokens.
+
+**Hard cap (anti-runaway).** Across one task, if total cycles (build attempts +
+adjudications) exceed **~2 full cycles**, force a bounce to the user regardless of
+sub-loop state — a backstop so counting a sub-loop wrong can't run away.
+
+### 8.9 Critic — [N] · SUBAGENT (independent reviewer), Tier 2 / high-risk only
 - Reviews the slice's diff **and the test** — auditing the test for tautology ("does
   this verify the requirement, or just assert what the code does?").
 - Adds `security-and-hardening` when the slice touches auth, input, storage, or
@@ -411,54 +558,83 @@ Two separate concerns:
 
 Tier is a **model selector**, not a stage gate: every task is planned and approved.
 
-| | Easy (Tier 0) | Standard (Tier 1) | Complex (Tier 2) |
+| | Easy (Tier 0) | Standard (Tier 1) | Complex / load-bearing (Tier 2) |
 | --- | --- | --- | --- |
 | Intake | subagent | subagent | subagent |
 | Route | passive → junior planner | passive → junior planner | passive → senior planner |
 | **Planner** | **junior, subagent** | **junior, subagent** | **senior, subagent** |
 | **Approve** | **always: prose plan + short gate** | **always: prose plan + short gate** | **always: prose plan + short gate** |
-| Who writes the test | builder (or none, cosmetic) | builder | independent test-engineer |
-| Builder | per-task level (junior floor) | per-task level | per-task level (senior floor) |
+| Test author (if `test_subtask`) | **test-engineer-junior** | **test-engineer-junior** | **test-engineer-senior** |
+| Builder (make-green) | per-task level (junior floor) | per-task level | per-task level (senior floor) |
 | Verify (run tests) | passive hook | passive hook | passive hook, per slice |
 | Code review | none | senior reviews junior | Critic subagent, per slice |
 | Finalize | log + stop | log + stop | log + stop |
 
 When in doubt, route up — under-routing breaks things (expensive rework);
-over-routing wastes a few tokens (cheap).
+over-routing wastes a few tokens (cheap). The test author is always the independent
+test-engineer; tier only picks its model. If Pass A found the case already covered,
+there is **no `test_subtask`** and no test-engineer runs — build + regression only.
 
-### Easy task (Tier 0) — e.g. "rename the Save button label"
+### Cosmetic task (Tier 0) — e.g. "rename the Save button label"
 ```
 1. INTAKE          [subagent · cheap] index.md -> frontend.md -> light scan
-     out: restatement + target_refs + candidates + tier:0 + scope_hints + acceptance criteria
+     out: target_refs + tier:0 + change_type:cosmetic + scope_hints + acceptance criteria
 2. ROUTE           [passive] Tier 0 -> planner-junior · builder floor junior
-3. PLANNER-JUNIOR  [subagent] reads ~5 files in scope_hints -> 1-task task_list + plain user_summary
+3. PLANNER-JUNIOR  [subagent] reads ~2 files -> 1-task task_list (NO test_subtask) + plain user_summary
 4. APPROVE         [Conductor] post user_summary as normal message, WAIT      <-- ALWAYS
      "I'll rename the Save button label on the settings screen. Proceed?"
-     short question gate: [Proceed] [Ask / adjust]
-     feedback -> re-plan -> re-present (loop); Proceed -> plan_approved:true (edits blocked until here)
-5. BUILDER-JUNIOR  [subagent] edit in place (cosmetic -> smoke check) · return diff summary
-6. VERIFY (tests)  [passive hook] scoped/smoke · PASS -> on · FAIL -> 1 retry -> senior
-     review: none
-7. FINALIZE        [passive] scope audit · log_outcome (+ touch frontend.md) · STOP
+     short question gate: [Proceed] [Ask / adjust]   ·   Proceed -> plan_approved:true
+5. BUILDER-JUNIOR  [subagent] edit source in place · smoke check only · return diff
+     (no test_subtask -> no test-engineer spun)
+6. VERIFY          [passive hook] smoke/render check
+7. FINALIZE        [passive] scope audit · log_outcome · STOP
 ```
 
-### Difficult task (Tier 2) — e.g. "add multi-currency support to portfolio P&L"
+### Feature task, coverage already exists (skip path) — e.g. "add 'select all' next to existing bulk-delete"
 ```
-1. INTAKE          [subagent] index.md -> calc/display/storage pages -> cross-cutting -> Tier 2, low conf
-     out: restatement + target_refs + scope_hints + acceptance criteria
+1. INTAKE          [subagent] index.md -> list.md -> Tier 1 · change_type:feature
+2. ROUTE           [passive] planner-junior · builder floor junior
+3. PLANNER-JUNIOR  [subagent] Pass A: tests/list.test.ts covers "bulk selection" already
+                   -> NO test_subtask for that case  ·  Pass B: collect regression_tests
+4. APPROVE         [Conductor] post user_summary, WAIT · [Proceed] -> plan_approved:true
+5. BUILDER-JUNIOR  [subagent] implement · edit source in place      (no test-engineer spun)
+6. VERIFY          [passive hook] run existing direct + regression tests via test-impact.md
+7. FINALIZE        [passive] scope audit · log_outcome · STOP
+```
+
+### Feature/bugfix task, new coverage needed (Tier 0/1) — e.g. "add a 'mark all as read' button"
+```
+1. INTAKE          [subagent] index.md -> notifications.md -> Tier 1 · change_type:feature
+2. ROUTE           [passive] planner-junior · builder floor junior
+3. PLANNER-JUNIOR  [subagent] Pass A: not covered -> test_subtask{create} · Pass B: regression_tests
+                   -> task_list + plain user_summary
+4. APPROVE         [Conductor] post user_summary, WAIT                         <-- ALWAYS
+     "I'll add a Mark All as Read button that clears all unread items. Proceed?"
+     [Proceed] -> plan_approved:true
+5. TEST-ENG-JUNIOR [subagent · independent] criteria only, never sees plan/code -> red test
+6. BUILDER-JUNIOR  [subagent] make-green (source only, cannot touch test)
+     red 3x or identical-error 2x -> escalate senior -> still stuck -> adjudicate (§8.8.1)
+7. VERIFY          [passive hook] direct + regression tests
+     review: builder-senior reviews builder-junior diff (Tier 1, lightweight)
+8. FINALIZE        [passive] scope audit · log_outcome + update test-impact.md (covers + depends_on) · STOP
+```
+
+### Difficult / load-bearing task (Tier 2) — e.g. "add multi-currency support to portfolio P&L"
+```
+1. INTAKE          [subagent] index.md -> calc/display/storage -> cross-cutting -> Tier 2, low conf
 2. ROUTE           [passive] planner-senior · builder floor senior
-3. PLANNER-SENIOR  [subagent] deep read within scope_hints -> thin slices (each tagged easy|hard) + plain user_summary
+3. PLANNER-SENIOR  [subagent] deep read + Pass A/B -> thin slices (test_subtask + regression each) + user_summary
 4. APPROVE         [Conductor] post plain-language summary, WAIT               <-- ALWAYS
      "Here's how I'll add multi-currency to your P&L, in 3 steps..." (no code/paths)
-     short question gate: [Proceed] [Ask / adjust]
-     feedback -> re-plan -> re-present (loop); Proceed -> plan_approved:true
+     [Proceed] -> plan_approved:true   (feedback -> re-plan -> re-present loop)
 5. PER-SLICE LOOP  (S1 -> S2 -> S3):
-     a. TEST-ENGINEER  [subagent · independent] tests from criteria; never sees implementation
-     b. BUILDER        [subagent] dispatched by slice.level · make the slice pass · edit in place
-     c. VERIFY (tests) [passive hook] run the slice's scoped tests
-     d. CRITIC         [subagent · independent] review diff + audit test + security
+     a. TEST-ENG-SENIOR [subagent · independent] tests from criteria; never sees implementation
+     b. BUILDER         [subagent] dispatched by slice.level · make-green · source only
+        (stuck -> escalate -> adjudicate §8.8.1 -> bounce to user if criteria ambiguous)
+     c. VERIFY (tests)  [passive hook] slice direct + regression tests
+     d. CRITIC          [subagent · independent] review diff + audit test for tautology + security
      slice green -> next slice
-6. FINALIZE        [passive] scope audit across all slices · log_outcome + update wiki + index hints · STOP
+6. FINALIZE        [passive] scope audit · log_outcome + wiki + test-impact.md (covers + depends_on) · STOP
 ```
 
 ---
@@ -505,17 +681,43 @@ separate mode built on `opencode serve` + ephemeral clones, out of scope here.
 ## 11. Test layer & testing policy — [N] (R4)
 
 **Two orthogonal axes — keep them separate.**
-- **Does a test get written?** Decided by `change_type` (from Intake), *not* by tier.
-  A feature or bug fix is always tested, however small; a cosmetic change is not.
-- **Who writes it, and how hard is it reviewed?** Decided by tier / risk. Low risk →
-  the Builder writes its own test. High risk → an independent test-engineer does.
+- **Does a test get written?** Decided by `change_type` (from Intake) **and** Pass A
+  coverage. `feature`/`bugfix` with no existing coverage → yes; `cosmetic` → no;
+  already-covered case → no (skip — build + regression only).
+- **Who writes it, and how heavy is review?** Decided by tier. The author is **always
+  the independent test-engineer** (never the Builder); tier only selects
+  junior vs senior model and whether the Critic audits. Independence of authorship is
+  constant; rigor scales with tier.
 
 **Impact map.** `knowledge/test-impact.md` is the routing table that maps
-`source file/dir -> test file(s)` — i.e. which tests exercise which code. It is **not**
-a description of what each test checks (that lives in the test's own descriptive
-name). Verify uses it to run only the relevant tests: it intersects the files the
-Builder touched with the map → a scoped run instead of the whole suite. Finalize
-maintains it: when a run adds a new test, it adds/updates the `source -> test` entry.
+`source file/dir -> test file(s)`. It serves two purposes:
+- **Verify:** runs direct tests + regression tests (callers/dependents) automatically.
+- **Planner:** reads it before composing `test_subtask` — Pass A for create/extend
+  decision, Pass B for regression scope.
+
+Each entry carries two annotations so the Planner can reason without opening test
+files:
+- `covers` — what cases the test directly checks (for Pass A).
+- `depends_on` — which source files/functions this test exercises indirectly, i.e.
+  it calls them (for Pass B reverse lookup).
+
+```
+# test-impact.md example
+src/tax.ts       -> tests/tax.test.ts       # covers: exempt items, 2dp rounding, null input
+src/checkout.ts  -> tests/checkout.test.ts  # covers: cart total, discount logic
+                                            # depends_on: src/tax.ts::calculateTax
+src/invoice.ts   -> tests/invoice.test.ts   # covers: PDF generation, line items
+                                            # depends_on: src/tax.ts::formatTaxLine
+```
+
+When Planner changes `src/tax.ts`, Pass B finds `checkout.test.ts` and
+`invoice.test.ts` via their `depends_on` annotations → both go into
+`regression_tests` on the task → Verify runs them automatically.
+
+Finalize maintains it every run: new test → add row with `covers`; extended test →
+update `covers`; if a new dependency is discovered during the build (Builder touched
+a file not in scope) → add `depends_on` annotation. If this is stale, Pass B misses
+regressions.
 
 **Where tests live.** Tests are written as real files **into the project's test
 directory**, in place and uncommitted like all other edits (§10). Once the user
@@ -523,29 +725,28 @@ commits the run, they become a permanent part of the regression suite — every 
 run's Verify can pick them up via the impact map. The harness does not keep tests in
 a scratch area; they accrete in the repo.
 
-**When tests are created — keyed off `change_type`.**
-- **`bugfix` → always, first.** A failing test reproducing the bug, then fix to green
-  (the Prove-It pattern). Non-negotiable, at every tier.
-- **`feature` → always.** Tests for the new behavior, written first from the criteria
-  (red → green). Applies at Tier 0/1 too — a trivial new feature still gets a test;
-  the Builder writes it.
-- **`refactor` → no new tests.** Existing tests must still pass.
-- **`cosmetic` → smoke/render check or nothing.** The only case that legitimately
-  skips real tests.
+**When tests are created — keyed off `change_type` + Pass A coverage.**
+- **`bugfix` → always, first.** A failing test reproducing the bug (the Prove-It
+  pattern), authored by the test-engineer, then the Builder fixes to green. Every tier.
+- **`feature` → yes, unless already covered.** A red test written first from the
+  criteria; the Builder makes it green. If Pass A finds the case already covered, no
+  new test and no test-engineer — build + regression only.
+- **`refactor` → no new tests.** Existing tests must still pass (run as regression).
+- **`cosmetic` → smoke/render check or nothing.** No `test_subtask`, no test-engineer.
 
 **Independence (anti-rubber-stamp).** The danger is the definition of "correct" and
 the implementation coming from the same reasoning. So:
 - "Correct" is defined **upstream** by Intake as acceptance criteria — independent of
   the plan and the build — and **approved by the user** (§8.3) before any build,
   closing the gap tests can't cover: a *wrong* plan.
-- **Low stakes (Tier 0/1):** the Builder writes the test **first, from the criteria**
-  (red), then the code (green). Same person, but still test-first.
-- **Critical (Tier 2, or auth/money/data):** an **independent test-engineer** subagent
-  writes the tests from the criteria, never seeing the plan or implementation. The
-  Builder only makes them pass. This independence is the expensive part — it is what
-  tier-gates, not the existence of tests.
-- **Always (non-trivial):** the Critic audits the test for tautology — a test that
-  cannot fail proves nothing.
+- The **test-engineer** (a separate subagent, §8.8) writes every test from the
+  criteria, never seeing the plan or implementation. The **Builder makes it green and
+  cannot edit the test** (no test-dir write). Same enforcement at every tier — only
+  the test-engineer's model and the Critic audit scale with tier. This is the only
+  form of independence that holds: separate context, not a same-agent promise.
+- If a test looks wrong, it is **adjudicated by a fresh test-engineer against the
+  criteria** (§8.8.1), never silently changed by the Builder. Unresolvable after one
+  adjudication → the criteria are the problem → bounce to the user.
 
 Cold start / `/bootstrap`: seed `test-impact.md` from existing test dirs.
 
@@ -619,7 +820,8 @@ Per-task token cost falls with usage. Measurable via A16.7.
     intake.md                             # subagent (triage + criteria)
     planner-junior.md planner-senior.md   # subagents, differ only by model:
     builder-junior.md builder-senior.md   # subagents, differ only by model:
-    test-engineer.md critic.md            # specialist subagents (Tier 2 / critical)
+    test-engineer-junior.md test-engineer-senior.md  # independent test authors, by tier
+    critic.md                             # independent reviewer (Tier 2)
   plugins/
     spine.ts                              # the only plugin
   tools/
@@ -667,8 +869,13 @@ Do not pass a checkpoint until its assertion holds.
    senior after one retry; edits appear uncommitted in the working tree.
 10. **Verify split.** PASS test-run is a passive hook (no subagent); Tier 2 review is
     an independent Critic subagent per slice.
-11. **Test-engineer independence.** PASS for a critical task, the test author is a
-    separate subagent that did not see the plan or implementation.
+11. **Test-engineer is the sole test author + make-green loop.** PASS for a
+    feature/bugfix task with no existing coverage, the test was written by an
+    **independent test-engineer subagent** (junior at Tier 0/1) that did not see the
+    plan or implementation, and the **Builder could not write to the test dir**; a
+    deliberately wrong test triggers **adjudication by a fresh test-engineer** (not the
+    original), and an unresolvable case after one adjudication **bounces to the user**.
+    A task whose case is already covered (Pass A) runs **no** test-engineer.
 12. **Finalize + self-improvement write + stop.** PASS a new/updated wiki page and a
     `runs.md` entry exist; the harness performs no git and ends with the
     "uncommitted, your turn" message.
@@ -703,8 +910,12 @@ The build is **done** only when all pass. Drive via the TUI.
   accepted plan** (here, once); Planner/Builder/Critic produced **zero** prompts; no
   subagent toolset contains `question`; approval was never inferred from free chat
   text. A second task asks again (per-task flag).
-- **A16.4 — test policy (R4).** A bug fix → a failing regression test before the fix,
-  then passes. A cosmetic change → no unit test manufactured.
+- **A16.4 — test policy (R4).** Four checks: (a) a Tier 0 **feature** with no existing
+  coverage → the **test-engineer** (not the Builder) wrote a real red test first, then
+  the Builder made it green; (b) a bug fix (any tier) → a failing test reproducing the
+  bug, then fix to green; (c) a cosmetic change → no `test_subtask`, no test-engineer,
+  no unit test manufactured; (d) a feature whose case Pass A finds already covered →
+  **no test-engineer spun**, build + regression only.
 - **A16.5 — cold start (R2).** Empty `knowledge/`, one task. Assert: a wiki page +
   an `index.md` hint now exist (uncommitted).
 - **A16.6 — bootstrap (R3).** `/bootstrap` on a repo with code. Assert: "where does X
@@ -721,9 +932,14 @@ The build is **done** only when all pass. Drive via the TUI.
   Assert: it cannot; it uses `wiki_write` or escalates.
 - **A16.11 — model escalation.** Force a junior Verify failure twice. Assert: the
   task escalates to builder-senior with the failure context.
-- **A16.12 — test independence + tautology audit.** A Tier 2 critical task. Assert:
-  tests authored by the test-engineer subagent; the Critic flags a deliberately
-  tautological test.
+- **A16.12 — independence + adjudication, not rubber-stamp.** (a) A Tier 0 feature →
+  assert the test was authored by the **independent test-engineer** subagent and the
+  Builder's toolset has **no write to the test dir**. (b) Plant a wrong test → assert
+  the Builder **bounces** (does not edit the test), a **fresh** test-engineer
+  adjudicates against criteria, and the wrong test is fixed there. (c) Plant
+  contradictory acceptance criteria → assert that after one adjudication the task
+  **bounces to the user**, not into an infinite agent loop. The Critic flags a
+  deliberately tautological test.
 - **A16.13 — per-slice review.** A multi-slice Tier 2 task. Assert: review ran at
   each slice boundary, not once at the end.
 - **A16.14 — no git writes (R8).** Run any task. Assert: `git log` unchanged, no new
@@ -751,9 +967,9 @@ tool), except `karpathy-guidelines` (from
 | Route | — (mechanical) |
 | Planner (junior/senior) | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `interview-me` |
 | Approve | — (mechanical: `question` tool) |
-| Builder (junior/senior) | `incremental-implementation`, `test-driven-development`, `karpathy-guidelines`, `frontend-ui-engineering` (UI), `api-and-interface-design` (APIs) |
+| Builder (junior/senior) | `incremental-implementation`, `test-driven-development` (green-phase only — make the red test pass, never edit it), `karpathy-guidelines`, `frontend-ui-engineering` (UI), `api-and-interface-design` (APIs) |
 | Verify (run) | — (mechanical) |
-| Test-engineer | `test-driven-development` (+ `test-engineer` persona) |
+| Test-engineer (junior/senior) | `test-driven-development` (+ `test-engineer` persona) |
 | Critic | `code-review-and-quality`, `karpathy-guidelines`, `doubt-driven-development` (+ `security-and-hardening`) |
 | Finalize | `documentation-and-adrs` (knowledge write only) |
 | Bootstrap | `spec-driven-development`, `documentation-and-adrs` |

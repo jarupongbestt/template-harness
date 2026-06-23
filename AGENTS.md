@@ -1,11 +1,11 @@
 ---
 description: "Skill-to-agent mapping for the Bridge harness v4. Each agent calls `skill(\"<name>\")` to load stage-specific guidance."
-source_refs: "harness-build-spec-4.md (§17), .opencode/skills/*/SKILL.md"
+source_refs: "harness-build-spec.md (§17), .opencode/skills/*/SKILL.md"
 ---
 
 # Agent Skills Mapping (v4)
 
-Per §17 of `harness-build-spec-4.md`, each stage loads the relevant skill via the `skill` tool. Skills live in `.opencode/skills/` and are loaded at runtime by the agent.
+Per §17 of `harness-build-spec.md`, each stage loads the relevant skill via the `skill` tool. Skills live in `.opencode/skills/` and are loaded at runtime by the agent.
 
 | Agent / Stage | Skills |
 |---|---|
@@ -14,10 +14,11 @@ Per §17 of `harness-build-spec-4.md`, each stage loads the relevant skill via t
 | **Planner-junior** | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `interview-me` |
 | **Planner-senior** | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `interview-me` |
 | **Approve** | _(mechanical — `question` tool)_ |
-| **Builder-junior** | `incremental-implementation`, `test-driven-development`, `karpathy-guidelines`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
-| **Builder-senior** | `incremental-implementation`, `test-driven-development`, `karpathy-guidelines`, `code-review-and-quality`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
+| **Builder-junior** | `incremental-implementation`, `test-driven-development` (green-phase only), `karpathy-guidelines`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
+| **Builder-senior** | `incremental-implementation`, `test-driven-development` (green-phase only), `karpathy-guidelines`, `code-review-and-quality`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
 | **Verify (run)** | _(mechanical — no skill)_ |
-| **Test-engineer** | `test-driven-development` (+ `test-engineer` persona) |
+| **Test-engineer-junior** | `test-driven-development` (+ `test-engineer` persona) |
+| **Test-engineer-senior** | `test-driven-development` (+ `test-engineer` persona) |
 | **Critic** | `code-review-and-quality`, `karpathy-guidelines`, `doubt-driven-development`, `security-and-hardening` |
 | **Finalize** | `documentation-and-adrs` (knowledge write only) |
 | **Bootstrap** | `spec-driven-development`, `documentation-and-adrs` |

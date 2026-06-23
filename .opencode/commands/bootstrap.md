@@ -1,5 +1,5 @@
 ---
-description: "Generate initial knowledge layer from existing codebase: walk repo structure, generate index.md, wiki pages per area, test-impact.md skeleton (harness-build-spec-4.md §7.2)"
+description: "Generate initial knowledge layer from existing codebase: walk repo structure, generate index.md, wiki pages per area, test-impact.md skeleton (harness-build-spec.md §7.2)"
 ---
 
 You are running the /bootstrap command. Your task is to generate the initial knowledge layer from the existing codebase.
@@ -23,7 +23,7 @@ You are running the /bootstrap command. Your task is to generate the initial kno
 
 4. **Generate knowledge/test-impact.md**
    - Skeleton mapping source directories to test directories.
-   - Format: `source_dir -> test_dir` (one per line).
+   - Format with `covers` and `depends_on` annotations per §11 of harness-build-spec.md.
 
 ## Skills available
 - `spec-driven-development`

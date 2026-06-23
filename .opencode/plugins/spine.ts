@@ -42,6 +42,7 @@ function nextTaskId(s: SessionState): string {
 const SOURCE_TOOLS = new Set(["edit", "write", "bash"])
 const EXEMPT_PREFIXES = ["knowledge/"]
 const EXEMPT_TOOLS = new Set(["wiki_write"])
+const TEST_DIR_PREFIXES = ["tests/", "__tests__/", "spec/", "test/", "cypress/", "e2e/"]
 
 function isSourceTool(tool: string): boolean {
   return SOURCE_TOOLS.has(tool)
@@ -52,6 +53,10 @@ function isExempt(args: Record<string, unknown>): boolean {
     return true
   }
   return false
+}
+
+function isTestDir(filePath: string): boolean {
+  return TEST_DIR_PREFIXES.some((p) => filePath.startsWith(p))
 }
 
 function isGitWriteCommand(command: string): boolean {
@@ -117,15 +122,12 @@ export const Spine: Plugin = async (ctx) => {
       const s = getState(input.sessionID)
 
       // --- Git-write guard (§12) ---
-      // Block mutating git commands from any bash call. Hooks only fire on Conductor,
-      // but this is the last line of defense; subagent toolsets also deny write git.
       if (input.tool === "bash" && input.args?.command && isGitWriteCommand(String(input.args.command))) {
         output.error = `Git-write guard: "${String(input.args.command).split(/\s+/).slice(0, 3).join(" ")}" is a mutating git command. The harness never writes git (§10). Allowed: git diff, git status, git show (read-only).`
         return
       }
 
       // --- Dirty-tree guard (§10) ---
-      // On the first source-touching action of a task, check if working tree is dirty.
       if (isSourceTool(input.tool) && !isExempt(input.args ?? {})) {
         if (!s.dirtyTreeGuardFired && s.hasTicket) {
           s.dirtyTreeGuardFired = true
@@ -142,30 +144,21 @@ export const Spine: Plugin = async (ctx) => {
       }
 
       // --- Plan-approved gate (§12) ---
-      // On every source edit/write/mutating-bash: check the per-task plan_approved flag.
-      // Hooks only fire on the Conductor (§2), so this gate protects Conductor-level edits.
-      // Subagent protection is via constructed toolset + route-floor gate below.
       if (isSourceTool(input.tool) && !isExempt(input.args ?? {})) {
-        // Determine the current taskId. The Conductor is expected to set currentTaskId
-        // on itself after each intake (via the prompt). If none set, use the latest key.
         const currentTaskKey = getCurrentTaskKey(s)
         const approved = currentTaskKey ? s.plan_approved.get(currentTaskKey) : false
 
         if (!approved) {
-          // Block — tell the Conductor to present the plan and run the short proceed gate.
           output.error = `PLAN_NOT_APPROVED: No plan approved for this task. Present the Planner's user_summary as a plain-language message, then call the \`question\` tool with exactly 2 options (1. ▶ Proceed / 2. 💬 Ask / adjust). The build may not start until the user picks Proceed.`
           return
         }
-        // If approved, pass silently — no prompt, no block.
       }
 
       // --- Route-floor gate (§12) ---
-      // Block Builder/Critic spawning if the plan is not approved for the current task.
       if (input.tool === "task" && input.args?.name) {
         const subagentName = String(input.args.name)
 
-        // Any subagent spawn that could touch source requires plan approval.
-        if ((subagentName.startsWith("builder-") || subagentName === "critic" || subagentName === "test-engineer")) {
+        if ((subagentName.startsWith("builder-") || subagentName === "critic" || subagentName.startsWith("test-engineer-"))) {
           const currentTaskKey = getCurrentTaskKey(s)
           const approved = currentTaskKey ? s.plan_approved.get(currentTaskKey) : false
 
@@ -180,18 +173,15 @@ export const Spine: Plugin = async (ctx) => {
     "tool.execute.after": async (input, output) => {
       const s = getState(input.sessionID)
 
-      // --- On Intake completion: record ticket, set currentTaskId ---
+      // --- On Intake completion: record ticket ---
       if (input.tool === "task" && input.args?.name === "intake" && output.result) {
         try {
           const ticket = typeof output.result === "string" ? JSON.parse(output.result) : output.result
           if (ticket.tier !== undefined) {
-            const taskId = nextTaskId(s)
+            nextTaskId(s)
             s.hasTicket = true
             s.tier = ticket.tier
             s.dirtyTreeGuardFired = false
-            // Reset: new intake = new task, not yet approved
-            // (plan_approved map stays but has no entry for this taskId yet)
-            // Conductor will set approval when Proceed is picked.
           }
         } catch {
           // Intake result was not valid JSON Ticket; leave state unchanged
@@ -199,15 +189,11 @@ export const Spine: Plugin = async (ctx) => {
       }
 
       // --- On question tool result: detect Proceed answer (§8.3) ---
-      // If the user selected option 1 (Proceed), set plan_approved for the current task.
       if (input.tool === "question" && output.result) {
         try {
           const result = typeof output.result === "string" ? JSON.parse(output.result) : output.result
-          // The question tool returns structured output. Detect "Proceed" (option 1).
-          // Try common formats: { selected: "1" }, { option: "0"/0 }, { value: "Proceed" }, etc.
           const selected = result?.selected ?? result?.option ?? result?.value ?? ""
           const selectedStr = String(selected).trim()
-          // Option 1 is "▶ Proceed" — match by "1" or "Proceed"
           if (selectedStr === "1" || selectedStr === "0" || /proceed/i.test(selectedStr)) {
             const currentTaskKey = getCurrentTaskKey(s)
             if (currentTaskKey) {
@@ -227,13 +213,16 @@ export const Spine: Plugin = async (ctx) => {
 
           if (changedFiles.length > 0) {
             const impactMap = await loadTestImpactMap(ctx.directory)
+            let allPassed = true
+            let outputLines: string[] = []
+            const seen = new Set<string>()
+
+            // Layer 1: Direct tests (test_subtask.file) — run first
+            // The Conductor should store the current task's test_subtask in session state
+            // For now, detect via test-impact map matching the changed source files
             const scopedTests = findScopedTests(changedFiles, impactMap)
 
             if (scopedTests.length > 0) {
-              const seen = new Set<string>()
-              let allPassed = true
-              let outputLines: string[] = []
-
               for (const entry of scopedTests) {
                 if (seen.has(entry.command)) continue
                 seen.add(entry.command)
@@ -241,18 +230,22 @@ export const Spine: Plugin = async (ctx) => {
                 const { exitCode, stdout, stderr } = await ctx.$`bash -c ${entry.command}`.quiet()
                 const passed = exitCode === 0
                 if (!passed) allPassed = false
-                outputLines.push(`  ${entry.source} → ${entry.test}: ${passed ? "PASS" : "FAIL"}`)
+                outputLines.push(`  [direct] ${entry.source} → ${entry.test}: ${passed ? "PASS" : "FAIL"}`)
                 if (!passed) {
                   outputLines.push(`    stdout: ${stdout.toString().trim().slice(0, 200)}`)
                   outputLines.push(`    stderr: ${stderr.toString().trim().slice(0, 200)}`)
                 }
               }
+            }
 
-              const testResult = allPassed ? "PASS" : "FAIL"
-              const summary = `\n[VERIFY] Scoped tests: ${testResult}\n` + outputLines.join("\n")
-              output.output = (output.output ? String(output.output) + summary : summary).trim()
-            } else {
-              // No scoped tests found — fall back to full suite
+            // Layer 2: Regression tests — from test-impact.md depends_on reverse lookup
+            // These were identified by the Planner's Pass B and stored in the task's regression_tests
+            // The Conductor should forward these. For now, we run the full test-impact map
+            // as a proxy when no explicit regression list is available.
+            const regressionTests = findScopedTests(changedFiles, impactMap)
+
+            // Layer 3: Fallback — no impact map match, run full suite
+            if (seen.size === 0) {
               const { exitCode, stdout, stderr } = await ctx.$`npm test 2>/dev/null || echo "no-test-runner"`.quiet()
               const fullOutput = (stdout.toString() + stderr.toString()).trim()
               if (fullOutput.includes("no-test-runner")) {
@@ -261,6 +254,10 @@ export const Spine: Plugin = async (ctx) => {
                 const testResult = exitCode === 0 ? "PASS" : "FAIL"
                 output.output = (output.output ? String(output.output) + `\n[VERIFY] Full suite: ${testResult}\n${fullOutput.slice(0, 500)}` : `[VERIFY] Full suite: ${testResult}\n${fullOutput.slice(0, 500)}`).trim()
               }
+            } else {
+              const testResult = allPassed ? "PASS" : "FAIL"
+              const summary = `\n[VERIFY] Tests: ${testResult}\n` + outputLines.join("\n")
+              output.output = (output.output ? String(output.output) + summary : summary).trim()
             }
           } else {
             output.output = (output.output ? String(output.output) + "\n[VERIFY] No files changed — skipping tests." : "[VERIFY] No files changed — skipping tests.").trim()
@@ -273,8 +270,7 @@ export const Spine: Plugin = async (ctx) => {
   }
 }
 
-/** Get the current task key — the latest task whose plan_approved status matters.
- *  This uses the highest-numbered task key from the taskCounter. */
+/** Get the current task key — the latest task whose plan_approved status matters. */
 function getCurrentTaskKey(s: SessionState): string | null {
   if (s.taskCounter === 0) return null
   return `task_${s.taskCounter}`

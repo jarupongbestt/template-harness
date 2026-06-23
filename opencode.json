@@ -24,7 +24,10 @@
     "critic": {
       "model": "opencode/deepseek-v4-flash-free"
     },
-    "test-engineer": {
+    "test-engineer-junior": {
+      "model": "opencode/deepseek-v4-flash-free"
+    },
+    "test-engineer-senior": {
       "model": "opencode/deepseek-v4-flash-free"
     }
   }

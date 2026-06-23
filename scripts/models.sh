@@ -2,8 +2,8 @@
 # Swap per-tier model assignments in opencode.json.
 #
 # Tiers:
-#   small : intake, planner-junior, builder-junior
-#   big   : conductor, planner-senior, builder-senior, critic, test-engineer
+#   small : intake, planner-junior, builder-junior, test-engineer-junior
+#   big   : conductor, planner-senior, builder-senior, critic, test-engineer-senior
 #
 # Candidate model lists live in scripts/models.json (editable; see add/rm).
 # After any swap, restart opencode for it to take effect.
@@ -13,8 +13,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CFG="$ROOT/opencode.json"
 DATA="$ROOT/scripts/models.json"
 
-SMALL_AGENTS=(intake planner-junior builder-junior)
-BIG_AGENTS=(conductor planner-senior builder-senior critic test-engineer)
+SMALL_AGENTS=(intake planner-junior builder-junior test-engineer-junior)
+BIG_AGENTS=(conductor planner-senior builder-senior critic test-engineer-senior)
 
 die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 note() { printf '%s\n' "$*"; }
@@ -92,8 +92,8 @@ cmd_menu() {
   [ -t 0 ] || die "no terminal on stdin. Use non-interactive: $0 set <tier> <provider/model>"
   require_cfg; require_data
   local small_pick big_pick backup
-  small_pick="$(menu_pick "SMALL tier  -> intake, planner-junior, builder-junior" small)"
-  big_pick="$(menu_pick   "BIG tier    -> conductor, planner-senior, builder-senior, critic, test-engineer" big)"
+  small_pick="$(menu_pick "SMALL tier  -> intake, planner-junior, builder-junior, test-engineer-junior" small)"
+  big_pick="$(menu_pick   "BIG tier    -> conductor, planner-senior, builder-senior, critic, test-engineer-senior" big)"
   note "Applying:"
   apply_tier small "$small_pick"
   apply_tier big   "$big_pick"
@@ -148,8 +148,8 @@ Usage:
   $0 set <tier> <provider/model>  set a tier's active model (non-interactive)
 
 tier: small | big
-small = intake, planner-junior, builder-junior
-big   = conductor, planner-senior, builder-senior, critic, test-engineer
+small = intake, planner-junior, builder-junior, test-engineer-junior
+big   = conductor, planner-senior, builder-senior, critic, test-engineer-senior
 
 Candidate lists live in: scripts/models.json
 Restart opencode after swapping.

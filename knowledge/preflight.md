@@ -2,12 +2,12 @@
 title: Preflight Results (v4)
 kind: preflight
 status: pending
-source_refs: "harness-build-spec-4.md (§3)"
+source_refs: "harness-build-spec.md (§3)"
 updated: 2026-06-22
 ---
 # Preflight Checks
 
-Run these before building the harness on *your* opencode version (§3 of `harness-build-spec-4.md`).
+Run these before building the harness on *your* opencode version (§3 of `harness-build-spec.md`).
 
 - [ ] 1. **Primary hook fires.** Plugin logs in `tool.execute.before`; a primary-agent `bash` call appears in the log.
 - [ ] 2. **Subagent hook firing.** Spawn a subagent that calls `bash`. If the hook does **not** fire, proceed as written. If it **does** fire on your version, you may move some guards to hooks — record that here.
