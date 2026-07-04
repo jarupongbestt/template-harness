@@ -11,15 +11,15 @@ Per §17 of `harness-build-spec.md`, each stage loads the relevant skill via the
 |---|---|
 | **Intake** | `spec-driven-development`, `idea-refine` |
 | **Route** | _(mechanical — no skill)_ |
-| **Planner-junior** | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `interview-me` |
-| **Planner-senior** | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `interview-me` |
+| **Planner-junior** | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `root-cause-debugging`, `interview-me` |
+| **Planner-senior** | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `root-cause-debugging`, `interview-me` |
 | **Approve** | _(mechanical — `question` tool)_ |
-| **Builder-junior** | `incremental-implementation`, `test-driven-development` (green-phase only), `karpathy-guidelines`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
-| **Builder-senior** | `incremental-implementation`, `test-driven-development` (green-phase only), `karpathy-guidelines`, `code-review-and-quality`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
+| **Builder-junior** | `incremental-implementation`, `test-driven-development` (green-phase only), `karpathy-guidelines`, `root-cause-debugging`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
+| **Builder-senior** | `incremental-implementation`, `test-driven-development` (green-phase only), `karpathy-guidelines`, `code-review-and-quality`, `root-cause-debugging`, `frontend-ui-engineering` (UI tasks), `api-and-interface-design` (API tasks) |
 | **Verify (run)** | _(mechanical — no skill)_ |
 | **Test-engineer-junior** | `test-driven-development` (+ `test-engineer` persona) |
 | **Test-engineer-senior** | `test-driven-development` (+ `test-engineer` persona) |
-| **Critic** | `code-review-and-quality`, `karpathy-guidelines`, `doubt-driven-development`, `security-and-hardening` |
+| **Critic** | `code-review-and-quality`, `karpathy-guidelines`, `doubt-driven-development`, `root-cause-debugging`, `security-and-hardening` |
 | **Finalize** | `documentation-and-adrs` (knowledge write only) |
 | **Bootstrap** | `spec-driven-development`, `documentation-and-adrs` |
 
