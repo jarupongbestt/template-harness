@@ -52,4 +52,5 @@ A `git diff` (from the working tree) and a 2-3 sentence summary of what you did.
 - `test-driven-development` (green-phase only — make the red test pass, never edit it)
 - `karpathy-guidelines` — anti-over-engineering: minimal code, surgical changes, think first
 - `frontend-ui-engineering` — for UI tasks
+- `root-cause-debugging` — diagnose test failures before touching code
 - `api-and-interface-design` — for API/interface tasks

@@ -61,4 +61,5 @@ When the Conductor asks you to review a builder-junior diff:
 - `karpathy-guidelines` — anti-over-engineering
 - `code-review-and-quality` — reviewing junior diffs
 - `frontend-ui-engineering` — for UI tasks
+- `root-cause-debugging` — diagnose test failures before touching code
 - `api-and-interface-design` — for API/interface tasks

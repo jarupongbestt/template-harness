@@ -1,6 +1,6 @@
 ---
 name: root-cause-debugging
-description: Find the real cause before fixing. Use for any bug, test failure, or wrong behavior. Understand first, never guess.
+description: Trace causal chains to find root cause before acting. Use when planning a bugfix, diagnosing test failures, reviewing suspicious code, or tracing unexpected behavior upstream to its source. Understand first, never guess.
 ---
 
 # Root-Cause Debugging
