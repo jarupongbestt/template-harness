@@ -37,9 +37,13 @@ No worktree, no branch, no commit. All edits land in place. No git writes.
 Edit only files in the task's `files` / `scope_hints`. If you must touch a file outside scope, **STOP and bounce up**.
 
 ### 5. Escalation (§8.8.1 make-green loop)
-- If Verify fails, you get ONE retry.
-- If it fails again, you are the final level — surface the error with evidence.
+- If Verify fails, your **first action is NOT to change code.** Use `root-cause-debugging`: trace the failure upstream to the source of the discrepancy. State the causal chain ("X causes Y causes symptom Z") before you write any fix code.
+- The retry code must target that root cause — not the symptom in the error message.
+- You get ONE retry after the root cause analysis.
+- If it fails again, you are the final level — surface the error with evidence: the root cause chain, the diff, expected vs actual value.
+- If you cannot state a root cause after one attempt, bounce up immediately — do not guess.
 - If the change is bigger than claimed, bounce up for a re-Plan.
+- **A retry without a stated root cause is guessing, not retrying. It will be rejected by the Conductor.**
 
 ### 6. No knowledge writes — you do NOT write to `knowledge/`.
 

@@ -208,18 +208,45 @@ user msg ---> |  CONDUCTOR  (primary agent = the orchestrator)|
 
 ## 8. Stages & agents — [N]
 
-The pipeline is: **Intake → Route → Planner → Approve → Builder → Verify →
+The pipeline is: **Intake → (Clarify?) → Route → Planner → Approve → Builder → Verify →
 Finalize.** Real-LLM stages are subagents; mechanical stages are passive code on the
 Conductor. Two specialist subagents (Test-engineer, Critic) switch on at higher
 tiers. **There is no Ground stage and no Merge stage.**
 
+**Clarify** is an optional early checkpoint before Route: if Intake sets
+`clarification_needed: true`, the Conductor surfaces the questions to the user.
+No planning work happens until ambiguity is resolved.
+
 ### 8.1 Intake — [N] (R5) · SUBAGENT (cheap model)
 - **In:** user message + `knowledge/index.md`. **Out:** distilled
-  `{ restatement, target_refs:[{desc,file,locator}], candidates:[…], ambiguity, ticket, tier, change_type, confidence, scope_hints, touched_wiki_pages, acceptance_criteria }`.
+  `{ restatement, target_refs:[{desc,file,locator}], candidates:[…], ambiguity, ticket, tier, change_type, confidence, scope_hints, touched_wiki_pages, acceptance_criteria, clarification_needed, clarification_questions }`.
 - **Knowledge pre-scan (MUST):** read `index.md` → match Navigation Hints → read
   matched wiki page(s) → set `scope_hints` to those `source_refs`. This is a
   **light** triage scan, enough to set tier and list candidates — **not** a deep
   code read (that is the Planner's job). Broad scan only when no hint matches.
+
+  **Bugfix exception — deeper scan (MUST):** when `change_type` is `bugfix`, Intake
+  extends the light triage with a **root cause read** of the relevant source files.
+  Do not guess at the cause; trace upstream from the symptom. Read code in
+  `scope_hints` deeply enough to write a one-sentence root cause statement. The
+  Planner uses this as its starting point; it does not re-discover the cause from
+  scratch. If Intake cannot determine the root cause within a bounded effort
+  (~2-3 code reads), it sets `confidence: "low"` and surfaces what it *did* find.
+
+- **Clarification check (MUST):** before finalizing the Ticket, Intake evaluates
+  whether the requirements are clear enough to plan from. This is a hard check —
+  "clear enough" means Intake can state, without guessing, what the user wants, why,
+  and what success looks like. When Intake is filling in blanks (inferring intent,
+  guessing priority, assuming constraints), the requirements are NOT clear.
+
+  If unclear, Intake sets `clarification_needed: true` and populates
+  `clarification_questions` — short, focused questions the Conductor presents to the
+  user **before** the Planner runs (§8.2a). Each question carries Intake's best
+  guess so the user can react rather than generate from scratch. This saves the cost
+  of a full planning cycle on an underspecified ask.
+
+  If clear, `clarification_needed: false` and `clarification_questions` is empty.
+
 - **Tier + confidence (MUST):** tier is the **model selector** for Planner /
   Builder / Test-engineer and the review depth. Rubric:
   * **Tier 0/1** — one or few pages, a known pattern, bounded blast radius.
@@ -240,8 +267,12 @@ tiers. **There is no Ground stage and no Merge stage.**
   correct means*; the Planner defines *how* — keep them in separate agents or tests
   rubber-stamp the implementation.
 - **Intake does not talk to the user.** Its `restatement` + `candidates` feed the
-  Planner and, ultimately, the Approve gate.
-- **Skill:** `spec-driven-development`, `idea-refine`.
+  Planner and, ultimately, the Approve gate. Its `clarification_questions` feed the
+  Conductor's early clarification checkpoint (§8.2a).
+- **Skill:** `spec-driven-development`, `idea-refine`, `root-cause-debugging` (for
+  bugfix cause analysis and digging past surface symptoms), `interview-me` (for
+  detecting ambiguity and composing clarification questions — compose text only; the
+  Conductor does the asking).
 
 ### 8.2 Route — [N] · PASSIVE (Conductor, no LLM)
 - Reads `tier` + `confidence`; selects the **planner model** and the **builder-level
@@ -252,6 +283,29 @@ tiers. **There is no Ground stage and no Merge stage.**
 - **Enforcement:** the route-floor hook (P) blocks any Builder dispatch before a
   plan exists and is approved. Conservative: when in doubt, route the planner up — a
   junior planner on a large scan is the one degradation locus.
+
+### 8.2a Clarification checkpoint — [N] · PASSIVE (Conductor) — BEFORE the Planner runs
+
+This is the **early clarification gate**. It fires between Intake and Route when
+Intake sets `clarification_needed: true`. It costs nothing when the requirements are
+clear (most tasks skip it), and saves a full planning cycle when they are not.
+
+- **Trigger:** `clarification_needed: true` on the Ticket.
+- **The Conductor presents Intake's `clarification_questions`** — one at a time, each
+  with the guess Intake attached — to the user via normal chat messages. Use the
+  `interview-me` skill format: one question per turn, with a confidence number.
+- **No plan, no Planner, no code reads** happen during clarification. The
+  Conductor's sole job here is to resolve the ambiguity.
+- **Resolution:** when the user's answers raise confidence enough that Intake's
+  original ambiguity is resolved, the Conductor **re-runs Intake** with the user's
+  answers folded in, producing a refined Ticket with `clarification_needed: false`.
+  Then proceed to Route → Planner normally.
+- **If the user cannot clarify:** ("I don't know, just do something reasonable") —
+  the Conductor records the ambiguity explicitly in the Ticket, sets Tier 2 (low
+  confidence), and routes to planner-senior with a note that the plan must name
+  assumptions clearly so the Approve gate can catch them.
+- **This is an internal Conductor-only step.** The Planner never sees the
+  clarification exchange — only the refined Ticket.
 
 ### 8.3 Approve — [N] (R6) · CONVERSATIONAL on Conductor + short `question` gate (Q) — **ONE CHECKPOINT PER TASK, AFTER THE PLAN**
 
@@ -414,7 +468,11 @@ even then, keep it on the Conductor — single site is the design).
 - **Stay in scope (MUST):** Builder edits **only** source files in the task's
   `files`/`scope_hints`. To touch a file outside scope, it **stops and bounces up**.
 - **Escalation (MUST):** see the make-green loop in §8.8 — same-level retry, then
-  senior, then adjudication. Retry edits **in place**; no git reset. If the change is
+  senior, then adjudication. Retry edits **in place**; no git reset. **Before any
+  retry, the Builder MUST perform root cause analysis** using the `root-cause-debugging`
+  skill: identify the causal chain from symptom to source before writing new code.
+  A retry without a stated root cause is not a retry — it is guessing, and it is
+  blocked. The bounce-up evidence must include the root cause chain. If the change is
   bigger than the plan claimed, the Builder **stops and bounces up** for a re-Plan.
 - **Skill:** `incremental-implementation`, `test-driven-development` (green-phase
   discipline only — make the red test pass properly), `karpathy-guidelines`,
@@ -510,16 +568,29 @@ it; a fresh test-engineer adjudicates against the acceptance criteria.
 ```
 test-engineer writes test (red)  →  builder makes green
   ├─ green                                   → slice passes
-  ├─ red, but error is DIFFERENT each try    → builder retries (real progress)
+  ├─ red, after root cause analysis shows real progress
+  │     → builder retries with targeted fix (same level, one retry only)
+  │     → if still red, escalate (junior → senior), then retry once more
   └─ STOP and bounce up when EITHER:
         • 3 reds in a row, OR
-        • the identical error twice (no progress — don't burn a 3rd try)
+        • the identical error twice (no progress — don't burn a 3rd try),
+        OR
+        • the Builder cannot state a root cause after one attempt (guessing)
      Builder bounces to the Conductor with evidence:
+        the root cause chain (cause → cause → symptom) ·
         the diff it wrote · value got vs value the test expected ·
         the acceptance criterion it believes it satisfied
      (escalation: the 2nd failing try escalates builder-junior → builder-senior
       before the bounce, so a mis-tagged "easy" task gets the stronger model first)
 ```
+
+**Root cause before retry (MUST):** the Builder's first action on a red test is NOT
+to change code. It is to run `root-cause-debugging`: trace the failure upstream to
+the source of the discrepancy (wrong assumption, missing edge case, misunderstood
+criteria, actual implementation error). The retry code then targets that root cause
+— not the symptom in the error message. A bounce without a stated root cause is
+invalid and is rejected by the Conductor (the Builder runs again with an explicit
+instruction to dig deeper).
 The Builder **never edits the test** to escape this loop — it has no test-dir write.
 
 **Loop 2 — adjudication (a fresh test-engineer, context-isolated).**
@@ -963,8 +1034,9 @@ tool), except `karpathy-guidelines` (from
 
 | Agent / stage | Skill(s) |
 | --- | --- |
-| Intake | `spec-driven-development`, `idea-refine` |
+| Intake | `spec-driven-development`, `idea-refine`, `root-cause-debugging` (bugfix cause analysis), `interview-me` (clarification questions) |
 | Route | — (mechanical) |
+| Clarification checkpoint | — (mechanical: Conductor presents Intake's questions) |
 | Planner (junior/senior) | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `interview-me` |
 | Approve | — (mechanical: `question` tool) |
 | Builder (junior/senior) | `incremental-implementation`, `test-driven-development` (green-phase only — make the red test pass, never edit it), `karpathy-guidelines`, `frontend-ui-engineering` (UI), `api-and-interface-design` (APIs) |

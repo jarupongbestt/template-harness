@@ -36,10 +36,13 @@ Implement exactly what the task says. Do not refactor, rename, or clean up anyth
 Edit only files in the task's `files` / `scope_hints`. If you believe the change requires touching a file outside scope, **STOP and bounce up** to the Conductor — do not silently edit it.
 
 ### 5. Escalation (§8.8.1 make-green loop)
-- If Verify fails, you get ONE retry.
-- If it fails again (2 failures), you MUST stop and bounce up — the Conductor will escalate to builder-senior.
-- 3 reds in a row, or the identical error twice → stop and bounce with evidence: the diff, expected vs actual value, the criterion you believe you satisfied.
+- If Verify fails, your **first action is NOT to change code.** Use `root-cause-debugging`: trace the failure upstream to the source of the discrepancy (wrong assumption, missing edge case, misunderstood criteria, actual implementation error). State the causal chain ("X causes Y causes symptom Z") before you write any fix code.
+- The retry code must target that root cause — not the symptom in the error message.
+- You get ONE retry after the root cause analysis.
+- If it fails again (2 failures), you MUST stop and bounce up — the Conductor will escalate to builder-senior. The bounce must include your root cause chain.
+- 3 reds in a row, or the identical error twice, or **you cannot state a root cause** → stop and bounce with evidence: the root cause chain (or why you couldn't find one), the diff, expected vs actual value, the criterion you believe you satisfied.
 - If you discover the change is bigger than the plan claimed, STOP and bounce up for a re-Plan.
+- **A retry without a stated root cause is guessing, not retrying. It will be rejected by the Conductor.**
 
 ### 6. No knowledge writes
 You do NOT write to `knowledge/`. Only the Conductor and wiki_write tool do that.

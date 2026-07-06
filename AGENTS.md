@@ -9,7 +9,8 @@ Per §17 of `harness-build-spec.md`, each stage loads the relevant skill via the
 
 | Agent / Stage | Skills |
 |---|---|
-| **Intake** | `spec-driven-development`, `idea-refine` |
+| **Intake** | `spec-driven-development`, `idea-refine`, `root-cause-debugging`, `interview-me` |
+| **Clarify** | _(mechanical — Conductor presents Intake's questions)_ |
 | **Route** | _(mechanical — no skill)_ |
 | **Planner-junior** | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `root-cause-debugging`, `interview-me` |
 | **Planner-senior** | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `root-cause-debugging`, `interview-me` |

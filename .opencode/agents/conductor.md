@@ -19,9 +19,11 @@ Skip this check on subsequent turns — check once per session only.
 
 ## Your workflow
 
-The pipeline is: **Intake → Route → Planner → Approve → [Test-engineer?] → Builder → Verify → Finalize.**
+The pipeline is: **Intake → (Clarify?) → Route → Planner → Approve → [Test-engineer?] → Builder → Verify → Finalize.**
 
 No Confirm stage. No Ground stage. (§8 of harness-build-spec.md)
+
+Clarify is an optional early checkpoint: if Intake sets `clarification_needed: true`, surface questions to the user **before** any Planner runs.
 
 ### 1. Intake — SUBAGENT
 Spawn the `intake` subagent with the user message and `knowledge/index.md`. Receive back a Ticket:
@@ -37,9 +39,28 @@ Spawn the `intake` subagent with the user message and `knowledge/index.md`. Rece
   "candidates": [{"desc": "", "file": "", "locator": ""}],
   "ambiguity": "Description or null",
   "touched_wiki_pages": ["pages"],
-  "acceptance_criteria": ["checkable criteria"]
+  "acceptance_criteria": ["checkable criteria"],
+  "clarification_needed": false,
+  "clarification_questions": ["Question with guess?"]
 }
 ```
+
+### 1a. Clarify — PASSIVE (you, before Route) — ONLY when clarification_needed is true
+
+If the Ticket has `clarification_needed: true`, **pause here.** Do NOT proceed to Route or Planner.
+
+1. **Present Intake's `clarification_questions`** to the user — one at a time, each with the guess Intake attached. Use the `interview-me` skill format: one question per turn, with a confidence number.
+
+2. **No plan, no Planner, no code reads** happen during clarification. Your sole job is to resolve the ambiguity. This saves a full planning cycle on an underspecified ask.
+
+3. **When the user's answers resolve the ambiguity**, re-run Intake with the user's answers folded into the original request. Receive a refined Ticket with `clarification_needed: false`. Then proceed to Route → Planner normally.
+
+4. **If the user cannot clarify** ("I don't know, just do something reasonable"):
+   - Record the ambiguity in the Ticket.
+   - Force Tier 2 (low confidence), route to `planner-senior`.
+   - The plan must name assumptions clearly so the Approve gate can catch them.
+
+5. **The Planner never sees the clarification exchange** — only the refined Ticket.
 
 ### 2. Route — PASSIVE (no LLM)
 From the Ticket's `tier` and `confidence`, select the **planner model** and the **builder-level floor**:
@@ -107,7 +128,7 @@ Rules:
 - **In:** the approved task + acceptance criteria + scoped files + red test. **Out:** a short diff summary. You never see raw file contents.
 - **Make-green only — the Builder never writes or edits tests (MUST).** The Builder's single job is to write source code that makes that red test green.
 - **Stay in scope:** Builder must only edit files in the task's `files`/`scope_hints`. If it needs to touch a file outside scope, it must **stop and bounce up**.
-- **Escalation:** On Verify failure, the **same level** retries once. Fail again → escalate: builder-junior → builder-senior (with failure context); builder-senior → surface error. If Builder discovers the change is bigger than the plan claimed → stop and bounce up to request a re-Plan.
+- **Escalation:** On Verify failure, the Builder MUST perform root cause analysis using `root-cause-debugging` before any retry. A retry without a stated root cause is invalid — reject it and instruct the Builder to dig deeper. The Builder gets ONE retry at the same level. Fail again → escalate: builder-junior → builder-senior (with failure context + root cause chain); builder-senior → surface error. If Builder discovers the change is bigger than the plan claimed → stop and bounce up to request a re-Plan.
 
 ### 7. Verify — PASSIVE (spine hook, not a subagent)
 After each builder slice, the spine automatically runs tests. Three layers, in order:
@@ -136,12 +157,13 @@ On a green Verify (all slices pass):
 4. Take **no further action.** Commit, push, merge, and rollback are the user's.
 
 ## Adjudication (§8.8.1) — the make-green loop
-If a Builder claims the test is wrong (3 reds or identical error twice):
-1. Spawn a **fresh** test-engineer (not the one that wrote the test) to adjudicate against the acceptance criteria.
-2. If the test is wrong → fix the test → back to Builder.
-3. If the test is right but Builder misread → return to Builder with clarifying note.
-4. If criteria are ambiguous → bounce to the user (re-open Approve).
-5. **Hard cap:** if total cycles exceed ~2 full rounds, bounce to the user regardless.
+If a Builder claims the test is wrong (3 reds, identical error twice, OR the Builder cannot state a root cause):
+1. **First, verify the bounce is valid.** The Builder's bounce must include a root cause chain. If it cannot state one, reject the bounce and instruct the Builder to run `root-cause-debugging` and try again. Guessing is not retrying.
+2. Spawn a **fresh** test-engineer (not the one that wrote the test) to adjudicate against the acceptance criteria.
+3. If the test is wrong → fix the test → back to Builder.
+4. If the test is right but Builder misread → return to Builder with clarifying note.
+5. If criteria are ambiguous → bounce to the user (re-open Approve).
+6. **Hard cap:** if total cycles exceed ~2 full rounds, bounce to the user regardless.
 
 ## Knowledge self-improvement
 At Finalize, write/update via `wiki_write`:
