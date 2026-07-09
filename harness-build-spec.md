@@ -269,7 +269,7 @@ No planning work happens until ambiguity is resolved.
 - **Intake does not talk to the user.** Its `restatement` + `candidates` feed the
   Planner and, ultimately, the Approve gate. Its `clarification_questions` feed the
   Conductor's early clarification checkpoint (§8.2a).
-- **Skill:** `spec-driven-development`, `idea-refine`, `root-cause-debugging` (for
+- **Skill:** `spec-driven-development`, `idea-refine`, `root-cause` (for
   bugfix cause analysis and digging past surface symptoms), `interview-me` (for
   detecting ambiguity and composing clarification questions — compose text only; the
   Conductor does the asking).
@@ -469,7 +469,7 @@ even then, keep it on the Conductor — single site is the design).
   `files`/`scope_hints`. To touch a file outside scope, it **stops and bounces up**.
 - **Escalation (MUST):** see the make-green loop in §8.8 — same-level retry, then
   senior, then adjudication. Retry edits **in place**; no git reset. **Before any
-  retry, the Builder MUST perform root cause analysis** using the `root-cause-debugging`
+  retry, the Builder MUST perform root cause analysis** using the `root-cause`
   skill: identify the causal chain from symptom to source before writing new code.
   A retry without a stated root cause is not a retry — it is guessing, and it is
   blocked. The bounce-up evidence must include the root cause chain. If the change is
@@ -585,7 +585,7 @@ test-engineer writes test (red)  →  builder makes green
 ```
 
 **Root cause before retry (MUST):** the Builder's first action on a red test is NOT
-to change code. It is to run `root-cause-debugging`: trace the failure upstream to
+to change code. It is to run `root-cause`: trace the failure upstream to
 the source of the discrepancy (wrong assumption, missing edge case, misunderstood
 criteria, actual implementation error). The retry code then targets that root cause
 — not the symptom in the error message. A bounce without a stated root cause is
@@ -1034,7 +1034,7 @@ tool), except `karpathy-guidelines` (from
 
 | Agent / stage | Skill(s) |
 | --- | --- |
-| Intake | `spec-driven-development`, `idea-refine`, `root-cause-debugging` (bugfix cause analysis), `interview-me` (clarification questions) |
+| Intake | `spec-driven-development`, `idea-refine`, `root-cause` (bugfix cause analysis), `interview-me` (clarification questions) |
 | Route | — (mechanical) |
 | Clarification checkpoint | — (mechanical: Conductor presents Intake's questions) |
 | Planner (junior/senior) | `planning-and-task-breakdown`, `context-engineering`, `source-driven-development`, `interview-me` |

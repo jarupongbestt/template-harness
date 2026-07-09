@@ -52,5 +52,5 @@ security: pass|flag
 - `code-review-and-quality`
 - `karpathy-guidelines`
 - `doubt-driven-development`
-- `root-cause-debugging` — trace flagged issues to root cause, not just symptoms
+- `root-cause` — load full root cause methodology via `skill("root-cause")`
 - `security-and-hardening`

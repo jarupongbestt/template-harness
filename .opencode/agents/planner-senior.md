@@ -112,5 +112,5 @@ Return a JSON object:
 - `planning-and-task-breakdown` — thin vertical slices
 - `context-engineering` — optimize context for each task
 - `source-driven-development` — ground decisions in official docs
-- `root-cause-debugging` — trace bug root causes before decomposing
+- `root-cause` — load full root cause methodology via `skill("root-cause")`
 - `interview-me` — formulate clarifications when confidence is low (but do NOT call `question` — produce text only; the Conductor presents it)

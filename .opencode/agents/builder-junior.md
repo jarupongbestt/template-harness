@@ -36,7 +36,7 @@ Implement exactly what the task says. Do not refactor, rename, or clean up anyth
 Edit only files in the task's `files` / `scope_hints`. If you believe the change requires touching a file outside scope, **STOP and bounce up** to the Conductor — do not silently edit it.
 
 ### 5. Escalation (§8.8.1 make-green loop)
-- If Verify fails, your **first action is NOT to change code.** Use `root-cause-debugging`: trace the failure upstream to the source of the discrepancy (wrong assumption, missing edge case, misunderstood criteria, actual implementation error). State the causal chain ("X causes Y causes symptom Z") before you write any fix code.
+- If Verify fails, your **first action is NOT to change code.** Use `root-cause` skill: **widen before you dig** — the first plausible cause is a hypothesis, not the answer. List several possible causes for the failure, rule each in/out with evidence, then trace the confirmed cause upstream. State the causal chain ("X causes Y causes symptom Z") before you write any fix code. Load full methodology via `skill("root-cause")`.
 - The retry code must target that root cause — not the symptom in the error message.
 - You get ONE retry after the root cause analysis.
 - If it fails again (2 failures), you MUST stop and bounce up — the Conductor will escalate to builder-senior. The bounce must include your root cause chain.
@@ -55,5 +55,5 @@ A `git diff` (from the working tree) and a 2-3 sentence summary of what you did.
 - `test-driven-development` (green-phase only — make the red test pass, never edit it)
 - `karpathy-guidelines` — anti-over-engineering: minimal code, surgical changes, think first
 - `frontend-ui-engineering` — for UI tasks
-- `root-cause-debugging` — diagnose test failures before touching code
+- `root-cause` — **widen before you dig**: list several causes, rule each in/out, then trace the confirmed chain. Load full methodology via `skill("root-cause")`.
 - `api-and-interface-design` — for API/interface tasks

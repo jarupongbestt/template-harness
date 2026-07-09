@@ -37,7 +37,7 @@ No worktree, no branch, no commit. All edits land in place. No git writes.
 Edit only files in the task's `files` / `scope_hints`. If you must touch a file outside scope, **STOP and bounce up**.
 
 ### 5. Escalation (§8.8.1 make-green loop)
-- If Verify fails, your **first action is NOT to change code.** Use `root-cause-debugging`: trace the failure upstream to the source of the discrepancy. State the causal chain ("X causes Y causes symptom Z") before you write any fix code.
+- If Verify fails, your **first action is NOT to change code.** Use `root-cause` skill: **widen before you dig** — the first plausible cause is a hypothesis, not the answer. List several possible causes for the failure, rule each in/out with evidence, then trace the confirmed cause upstream. State the causal chain ("X causes Y causes symptom Z") before you write any fix code. Load full methodology via `skill("root-cause")`.
 - The retry code must target that root cause — not the symptom in the error message.
 - You get ONE retry after the root cause analysis.
 - If it fails again, you are the final level — surface the error with evidence: the root cause chain, the diff, expected vs actual value.
@@ -65,5 +65,5 @@ When the Conductor asks you to review a builder-junior diff:
 - `karpathy-guidelines` — anti-over-engineering
 - `code-review-and-quality` — reviewing junior diffs
 - `frontend-ui-engineering` — for UI tasks
-- `root-cause-debugging` — diagnose test failures before touching code
+- `root-cause` — **widen before you dig**: list several causes, rule each in/out, then trace the confirmed chain. Load full methodology via `skill("root-cause")`.
 - `api-and-interface-design` — for API/interface tasks

@@ -128,7 +128,7 @@ Rules:
 - **In:** the approved task + acceptance criteria + scoped files + red test. **Out:** a short diff summary. You never see raw file contents.
 - **Make-green only — the Builder never writes or edits tests (MUST).** The Builder's single job is to write source code that makes that red test green.
 - **Stay in scope:** Builder must only edit files in the task's `files`/`scope_hints`. If it needs to touch a file outside scope, it must **stop and bounce up**.
-- **Escalation:** On Verify failure, the Builder MUST perform root cause analysis using `root-cause-debugging` before any retry. A retry without a stated root cause is invalid — reject it and instruct the Builder to dig deeper. The Builder gets ONE retry at the same level. Fail again → escalate: builder-junior → builder-senior (with failure context + root cause chain); builder-senior → surface error. If Builder discovers the change is bigger than the plan claimed → stop and bounce up to request a re-Plan.
+- **Escalation:** On Verify failure, the Builder MUST perform root cause analysis using `root-cause` before any retry. A retry without a stated root cause is invalid — reject it and instruct the Builder to dig deeper. The Builder gets ONE retry at the same level. Fail again → escalate: builder-junior → builder-senior (with failure context + root cause chain); builder-senior → surface error. If Builder discovers the change is bigger than the plan claimed → stop and bounce up to request a re-Plan.
 
 ### 7. Verify — PASSIVE (spine hook, not a subagent)
 After each builder slice, the spine automatically runs tests. Three layers, in order:
@@ -158,7 +158,7 @@ On a green Verify (all slices pass):
 
 ## Adjudication (§8.8.1) — the make-green loop
 If a Builder claims the test is wrong (3 reds, identical error twice, OR the Builder cannot state a root cause):
-1. **First, verify the bounce is valid.** The Builder's bounce must include a root cause chain. If it cannot state one, reject the bounce and instruct the Builder to run `root-cause-debugging` and try again. Guessing is not retrying.
+1. **First, verify the bounce is valid.** The Builder's bounce must include a root cause chain. If it cannot state one, reject the bounce and instruct the Builder to run `root-cause` and try again. Guessing is not retrying.
 2. Spawn a **fresh** test-engineer (not the one that wrote the test) to adjudicate against the acceptance criteria.
 3. If the test is wrong → fix the test → back to Builder.
 4. If the test is right but Builder misread → return to Builder with clarifying note.
