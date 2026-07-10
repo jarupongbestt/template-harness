@@ -26,6 +26,8 @@ description: Find the real cause — of a bug or wrong behavior, or of a "why do
 
 **Rule:** don't fix until you can say "**X** causes **Y** causes symptom **Z**, and my fix changes **X**." Can't fill that in? Keep digging, don't guess.
 
+**Confirm the symptom first:** know what the code *actually does wrong now* before theorizing why. If the request only describes the desired behavior (not the current broken behavior), don't guess the mechanism from what's wanted — reproduce the actual failure first, or ask what it does now if you can't.
+
 **Widen before you dig:** list every plausible cause first (a few, not one). The first cause that fits is a hypothesis — bugs often have more than one contributing cause. Rule each in or out with evidence before committing. Digging deep into the first guess just makes a wrong guess more confident.
 
 **Dig** by asking "why does that happen?" upstream from where the error *shows* to where it *starts*. Use only the effort the bug needs: a typo's chain is one line; an intermittent/async/multi-layer bug needs reproducing and narrowing until the cause is undeniable. Reach for logs or `git bisect` only when reasoning can't localize it.
