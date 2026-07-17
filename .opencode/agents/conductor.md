@@ -119,7 +119,7 @@ After approval, for each task in the plan's `task_list`:
 
 ### 6. Builder — SUBAGENT (always in-place, no worktree, make-green only)
 Dispatch per task by the Planner's `level` tag, at or above the tier's builder floor:
-- An `easy` task → spawn `builder-junior` (unless the tier floor is senior).
+- An `easy` task → spawn `builder-junior`.
 - A `hard` task → spawn `builder-senior`.
 - Feed it: the approved task + its acceptance criteria + the scoped files list + **the red test** (from test-engineer, if one was written).
 - The builder edits files **directly on the working tree, uncommitted** — no worktree, no branch, no commit.
@@ -176,7 +176,7 @@ At Finalize, write/update via `wiki_write`:
 Tier is a **model selector** for Planner / Builder / Test-engineer and a builder-level floor — it does not gate whether planning happens.
 - **Tier 0:** One page, one dir, known pattern, high confidence → planner-junior, builder floor junior, test-engineer-junior
 - **Tier 1:** Single area, multiple files, moderate confidence → planner-junior (or senior if low conf), test-engineer-junior
-- **Tier 2:** Multiple pages, cross-cutting, greenfield, low confidence → planner-senior, builder floor senior, test-engineer-senior
+- **Tier 2:** Multiple pages, cross-cutting, greenfield, low confidence → planner-senior, builder per task level, test-engineer-senior
 - When in doubt, route up (Tier 1 or 2).
 
 ## Critical rules

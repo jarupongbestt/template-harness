@@ -448,7 +448,7 @@ even then, keep it on the Conductor — single site is the design).
 - Two agent defs: **builder-junior** (cheap) and **builder-senior** (capable). Same
   skills, different `model:`.
 - **Dispatch per task by the Planner's `level` tag**, at or above the tier's builder
-  floor: an `easy` task → junior (unless the tier floor is senior); a `hard` task →
+  floor: an `easy` task → junior; a `hard` task →
   senior. The Conductor reads `level` and dispatches accordingly.
 - **In:** the approved task + its acceptance criteria + `change_type` + the scoped
   **source** files + the **already-written failing test** (from the test-engineer,
@@ -636,7 +636,7 @@ Tier is a **model selector**, not a stage gate: every task is planned and approv
 | **Planner** | **junior, subagent** | **junior, subagent** | **senior, subagent** |
 | **Approve** | **always: prose plan + short gate** | **always: prose plan + short gate** | **always: prose plan + short gate** |
 | Test author (if `test_subtask`) | **test-engineer-junior** | **test-engineer-junior** | **test-engineer-senior** |
-| Builder (make-green) | per-task level (junior floor) | per-task level | per-task level (senior floor) |
+| Builder (make-green) | per-task level (junior floor) | per-task level | per-task level |
 | Verify (run tests) | passive hook | passive hook | passive hook, per slice |
 | Code review | none | senior reviews junior | Critic subagent, per slice |
 | Finalize | log + stop | log + stop | log + stop |
