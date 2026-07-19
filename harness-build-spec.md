@@ -279,7 +279,7 @@ No planning work happens until ambiguity is resolved.
   floor**:
   * high-confidence trivial → `planner-junior`, builder floor junior.
   * standard → `planner-junior` (or senior if confidence is low), per-task builder.
-  * complex / cross-cutting / critical → `planner-senior`, builder floor senior.
+  * complex / cross-cutting / critical → `planner-senior`, builder per task level.
 - **Enforcement:** the route-floor hook (P) blocks any Builder dispatch before a
   plan exists and is approved. Conservative: when in doubt, route the planner up — a
   junior planner on a large scan is the one degradation locus.
@@ -693,7 +693,7 @@ there is **no `test_subtask`** and no test-engineer runs — build + regression 
 ### Difficult / load-bearing task (Tier 2) — e.g. "add multi-currency support to portfolio P&L"
 ```
 1. INTAKE          [subagent] index.md -> calc/display/storage -> cross-cutting -> Tier 2, low conf
-2. ROUTE           [passive] planner-senior · builder floor senior
+2. ROUTE           [passive] planner-senior · builder per task level
 3. PLANNER-SENIOR  [subagent] deep read + Pass A/B -> thin slices (test_subtask + regression each) + user_summary
 4. APPROVE         [Conductor] post plain-language summary, WAIT               <-- ALWAYS
      "Here's how I'll add multi-currency to your P&L, in 3 steps..." (no code/paths)
@@ -932,7 +932,7 @@ Do not pass a checkpoint until its assertion holds.
    issue **zero** prompts; no subagent toolset contains `question`. A second task in
    the same session asks again (per-task flag).
 8. **Route + tiers + model pick.** PASS Tier 0 picks planner-junior + builder floor
-   junior; Tier 2 picks planner-senior + builder floor senior and blocks Builder
+   junior; Tier 2 picks planner-senior + builder per task level and blocks Builder
    until the plan is approved.
 9. **Builder subagents + per-task dispatch + in-place edits.** PASS a plan with one
    `easy` + one `hard` task dispatches junior + senior respectively; a Builder

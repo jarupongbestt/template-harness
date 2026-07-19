@@ -66,7 +66,7 @@ If the Ticket has `clarification_needed: true`, **pause here.** Do NOT proceed t
 From the Ticket's `tier` and `confidence`, select the **planner model** and the **builder-level floor**:
 - **Tier 0** (high confidence, trivial): spawn `planner-junior`; builder floor = junior.
 - **Tier 1** (standard): spawn `planner-junior` (or `planner-senior` if confidence is low); builder per task.
-- **Tier 2** (complex, cross-cutting, low confidence): spawn `planner-senior`; builder floor = senior.
+- **Tier 2** (complex, cross-cutting, low confidence): spawn `planner-senior`; builder per task level.
 
 **Every task is planned.** Tier does not gate whether planning happens — it selects which planner model runs. When in doubt, route the planner up — a junior planner on a large scan is the one degradation locus.
 
